@@ -1,0 +1,13 @@
+[package]
+name = "sysy_compiler"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+lalrpop = "0.23.0"
+
+[dependencies]
+anyhow = "1.0.102"
+koopa = "0.0.9"
+lalrpop-util = { version = "0.21.0", features = ["lexer", "unicode"] }
+regex = "1.12.3"
