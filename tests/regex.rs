@@ -2,7 +2,10 @@ use regex::RegexBuilder;
 
 #[test]
 fn block_comment() {
-    let re = RegexBuilder::new(r"\/\*([^*]|\*+[^\*\/])*\*+\/").multi_line(true).build().unwrap();
+    let re = RegexBuilder::new(r"\/\*([^*]|\*+[^\*\/])*\*+\/")
+        .multi_line(true)
+        .build()
+        .unwrap();
 
     let hey = r#"as/ *casaaaaa*/dbz
 zaha/q*eg

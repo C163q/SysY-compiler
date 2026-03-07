@@ -1,5 +1,7 @@
 use koopa::ir::{
-    BasicBlock, Function, FunctionData, Program, Value, builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, dfg::DataFlowGraph
+    BasicBlock, Function, FunctionData, Program, Value,
+    builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
+    dfg::DataFlowGraph,
 };
 
 use crate::parse::ast;

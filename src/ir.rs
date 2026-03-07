@@ -32,6 +32,10 @@ impl Ast {
         visitor.visit(&mut buf, &mut NameManager::new(), &self.program)?;
         String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
+
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
 }
 
 impl From<Program> for Ast {

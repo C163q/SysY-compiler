@@ -8,4 +8,3 @@ pub fn get_type(s: &str) -> Type {
         _ => unimplemented!(),
     }
 }
-

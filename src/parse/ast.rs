@@ -9,6 +9,7 @@ pub struct CompUnit {
     pub func_def: FuncDef,
 }
 
+/// 文法标识符
 impl CompUnit {
     pub fn new(func_def: FuncDef) -> Self {
         Self { func_def }
@@ -21,6 +22,15 @@ impl Display for CompUnit {
     }
 }
 
+/// 函数的定义
+///
+/// ```c, ignore
+/// // func_type  ident
+/// //    ↓         ↓
+///      int      main() {
+///         // block
+///      }
+/// ```
 #[derive(Debug, Clone)]
 pub struct FuncDef {
     pub func_type: FuncType,
@@ -30,7 +40,11 @@ pub struct FuncDef {
 
 impl FuncDef {
     pub fn new(func_type: FuncType, ident: String, block: Block) -> Self {
-        Self { func_type, ident, block }
+        Self {
+            func_type,
+            ident,
+            block,
+        }
     }
 }
 
@@ -40,6 +54,14 @@ impl Display for FuncDef {
     }
 }
 
+/// 一个块由多条语句组成。
+///
+/// ```c, ignore
+/// {   // block
+///     int a = 0;  // Stmt
+///     return a;   // Stmt
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Block {
     pub stmt: Vec<Stmt>,
@@ -61,6 +83,12 @@ impl Display for Block {
     }
 }
 
+/// 语句
+///
+/// ```c, ignore
+/// return 0;   // Stmt
+/// ```
+/// Return(i32) <-  return 0;
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Return(i32),
@@ -80,6 +108,7 @@ impl Display for Stmt {
     }
 }
 
+/// 函数的返回类型
 #[derive(Debug, Clone)]
 pub struct FuncType {
     pub val: String,
