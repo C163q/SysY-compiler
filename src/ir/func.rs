@@ -1,10 +1,13 @@
 use koopa::ir::{
     BasicBlock, Function, FunctionData, Program, Value,
-    builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
+    builder::{BasicBlockBuilder, LocalInstBuilder},
     dfg::DataFlowGraph,
 };
 
-use crate::parse::ast;
+use crate::{
+    ir::meta::{Instruction, IntoIr},
+    parse::ast,
+};
 
 pub struct BlockFlow {
     block: BasicBlock,
@@ -50,14 +53,18 @@ impl ast::Block {
     }
 }
 
-impl ast::Stmt {
-    pub fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Value> {
+impl IntoIr for ast::Stmt {
+    fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Instruction> {
         #[allow(clippy::match_single_binding)]
         match self {
             ast::Stmt::Return(expr) => {
-                let value = dfg.new_value().integer(expr);
-                let ret = dfg.new_value().ret(Some(value));
-                vec![ret]
+                let mut vec = vec![];
+                let expr_values = expr.into_ir(dfg);
+                let some_last = expr_values.last().copied();
+                vec.extend(expr_values);
+                let ret = dfg.new_value().ret(some_last.map(|v| *v.inst()));
+                vec.push(Instruction::new(ret, true));
+                vec
             }
             _ => {
                 unimplemented!()
@@ -73,7 +80,11 @@ fn build_blocks(block: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
     };
     block.stmt.into_iter().for_each(|stmt| {
         let values = stmt.into_ir(dfg);
-        entry.values.extend(values);
+        entry.values.extend(
+            values
+                .into_iter()
+                .filter_map(|v| v.insert().then_some(*v.inst())),
+        );
     });
 
     vec![entry]

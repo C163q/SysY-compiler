@@ -88,14 +88,14 @@ impl Display for Block {
 /// ```c, ignore
 /// return 0;   // Stmt
 /// ```
-/// Return(i32) <-  return 0;
+/// Return(expr) <-  return 0;
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Return(i32),
+    Return(Expr),
 }
 
 impl Stmt {
-    pub fn new_return(val: i32) -> Self {
+    pub fn new_return(val: Expr) -> Self {
         Self::Return(val)
     }
 }
@@ -127,6 +127,119 @@ impl From<FuncType> for Type {
 }
 
 impl Display for FuncType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.val)
+    }
+}
+
+/// 表达式
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Unary(UnaryExpr),
+}
+
+impl Expr {
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Unary(unary)
+    }
+}
+
+impl Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expr::Unary(unary) => write!(f, "{}", unary),
+        }
+    }
+}
+
+/// 一元运算符
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+    Pos, // +
+    Neg, // -
+    Not, // !
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnaryOp::Pos => write!(f, "+"),
+            UnaryOp::Neg => write!(f, "-"),
+            UnaryOp::Not => write!(f, "!"),
+        }
+    }
+}
+
+/// 一元表达式
+#[derive(Debug, Clone)]
+pub enum UnaryExpr {
+    Primary(PrimaryExpr),
+    UnaryOp(UnaryOp, Box<UnaryExpr>),
+}
+
+impl UnaryExpr {
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Primary(primary)
+    }
+
+    pub fn new_unary_op(op: UnaryOp, expr: UnaryExpr) -> Self {
+        Self::UnaryOp(op, Box::new(expr))
+    }
+}
+
+impl Display for UnaryExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnaryExpr::Primary(primary) => write!(f, "{}", primary),
+            UnaryExpr::UnaryOp(op, expr) => write!(f, "{} {}", op, expr),
+        }
+    }
+}
+
+/// 基础表达式
+#[derive(Debug, Clone)]
+pub enum PrimaryExpr {
+    Num(Number),
+    Expr(Box<Expr>),
+}
+
+impl PrimaryExpr {
+    pub fn new_num(num: Number) -> Self {
+        Self::Num(num)
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Expr(Box::new(expr))
+    }
+}
+
+impl Display for PrimaryExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PrimaryExpr::Num(num) => write!(f, "{}", num),
+            PrimaryExpr::Expr(expr) => write!(f, "({})", expr),
+        }
+    }
+}
+
+/// 数字
+/// TODO: 变量
+#[derive(Debug, Clone)]
+pub struct Number {
+    pub val: i32,
+}
+
+impl Number {
+    pub fn new(val: i32) -> Self {
+        Self { val }
+    }
+
+    pub fn get_val(&self) -> i32 {
+        self.val
+    }
+}
+
+impl Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.val)
     }

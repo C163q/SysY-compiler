@@ -1,4 +1,6 @@
+pub mod expr;
 pub mod func;
+pub mod meta;
 
 use std::io;
 
