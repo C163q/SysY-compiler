@@ -134,20 +134,104 @@ impl Display for FuncType {
 
 /// 表达式
 #[derive(Debug, Clone)]
-pub enum Expr {
-    Unary(UnaryExpr),
+pub struct Expr {
+    pub expr: AddExpr,
 }
 
 impl Expr {
-    pub fn new_unary(unary: UnaryExpr) -> Self {
-        Self::Unary(unary)
+    pub fn new(expr: AddExpr) -> Self {
+        Self { expr }
     }
 }
 
 impl Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expr)
+    }
+}
+
+/// 加减法运算符
+#[derive(Debug, Clone, Copy)]
+pub enum AddOp {
+    Add, // +
+    Sub, // -
+}
+
+impl Display for AddOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expr::Unary(unary) => write!(f, "{}", unary),
+            AddOp::Add => write!(f, "+"),
+            AddOp::Sub => write!(f, "-"),
+        }
+    }
+}
+
+/// 加减法表达式
+#[derive(Debug, Clone)]
+pub enum AddExpr {
+    Mul(MulExpr),
+    Binary(Box<AddExpr>, AddOp, MulExpr),
+}
+
+impl AddExpr {
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::Mul(mul)
+    }
+
+    pub fn new_binary(left: AddExpr, op: AddOp, right: MulExpr) -> Self {
+        Self::Binary(Box::new(left), op, right)
+    }
+}
+
+impl Display for AddExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AddExpr::Mul(mul) => write!(f, "{}", mul),
+            AddExpr::Binary(left, op, right) => write!(f, "{} {} {}", left, op, right),
+        }
+    }
+}
+
+/// 乘除法运算符
+#[derive(Debug, Clone, Copy)]
+pub enum MulOp {
+    Mul, // *
+    Div, // /
+    Mod, // %
+}
+
+impl Display for MulOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MulOp::Mul => write!(f, "*"),
+            MulOp::Div => write!(f, "/"),
+            MulOp::Mod => write!(f, "%"),
+        }
+    }
+}
+
+/// 乘除法表达式
+#[derive(Debug, Clone)]
+pub enum MulExpr {
+    Unary(UnaryExpr),
+    Binary(Box<MulExpr>, MulOp, UnaryExpr),
+}
+
+impl MulExpr {
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Unary(unary)
+    }
+
+    pub fn new_binary(left: MulExpr, op: MulOp, right: UnaryExpr) -> Self {
+        Self::Binary(Box::new(left), op, right)
+    }
+}
+
+impl Display for MulExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MulExpr::Unary(unary) => write!(f, "{}", unary),
+            MulExpr::Binary(left, op, right) => write!(f, "{} {} {}", left, op, right),
         }
     }
 }

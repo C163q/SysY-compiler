@@ -11,8 +11,67 @@ use crate::{
 
 impl IntoIr for ast::Expr {
     fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Instruction> {
+        self.expr.into_ir(dfg)
+    }
+}
+
+fn binary_op_helper(
+    op: BinaryOp,
+    lhs_val: Vec<Instruction>,
+    rhs_val: Vec<Instruction>,
+    dfg: &mut DataFlowGraph,
+) -> Vec<Instruction> {
+    let mut vec = vec![];
+    let comp = dfg.new_value().binary(
+        op,
+        *lhs_val
+            .last()
+            .copied()
+            .expect("AddExpr expect a value")
+            .inst(),
+        *rhs_val
+            .last()
+            .copied()
+            .expect("AddExpr expect a value")
+            .inst(),
+    );
+    vec.extend(lhs_val);
+    vec.extend(rhs_val);
+    vec.push(Instruction::new(comp, true));
+    vec
+}
+
+impl IntoIr for ast::AddExpr {
+    fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Instruction> {
         match self {
-            ast::Expr::Unary(expr) => expr.into_ir(dfg),
+            ast::AddExpr::Mul(expr) => expr.into_ir(dfg),
+            ast::AddExpr::Binary(lhs, op, rhs) => match op {
+                ast::AddOp::Add => {
+                    binary_op_helper(BinaryOp::Add, lhs.into_ir(dfg), rhs.into_ir(dfg), dfg)
+                }
+                ast::AddOp::Sub => {
+                    binary_op_helper(BinaryOp::Sub, lhs.into_ir(dfg), rhs.into_ir(dfg), dfg)
+                }
+            },
+        }
+    }
+}
+
+impl IntoIr for ast::MulExpr {
+    fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Instruction> {
+        match self {
+            ast::MulExpr::Unary(expr) => expr.into_ir(dfg),
+            ast::MulExpr::Binary(lhs, op, rhs) => match op {
+                ast::MulOp::Mul => {
+                    binary_op_helper(BinaryOp::Mul, lhs.into_ir(dfg), rhs.into_ir(dfg), dfg)
+                }
+                ast::MulOp::Div => {
+                    binary_op_helper(BinaryOp::Div, lhs.into_ir(dfg), rhs.into_ir(dfg), dfg)
+                }
+                ast::MulOp::Mod => {
+                    binary_op_helper(BinaryOp::Mod, lhs.into_ir(dfg), rhs.into_ir(dfg), dfg)
+                }
+            },
         }
     }
 }

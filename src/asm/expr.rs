@@ -121,19 +121,45 @@ impl ToAsm for Binary {
             .next()
             .expect("No register assigned for rhs");
 
-        match self.op() {
-            KBinaryOp::Sub => {
-                let available_registers = context
-                    .register_mapper
-                    .get_available_registers_filtered(|r| r.is_caller_saved());
-                let rd = *available_registers
-                    .iter()
-                    .next()
-                    .expect("No available register");
+        fn binary_op_helper<F>(
+            lhs_reg: Register,
+            rhs_reg: Register,
+            context: &mut FunctionContext,
+            id: Value,
+            asms: &mut Vec<RiscvAsm>,
+            func: F,
+        )
+        where
+            F: Fn(Register, Register, Register, &mut FunctionContext, Value) -> RiscvAsm,
+        {
+            let available_registers = context
+                .register_mapper
+                .get_available_registers_filtered(|r| r.is_caller_saved());
+            let rd = *available_registers
+                .iter()
+                .next()
+                .expect("No available register");
 
-                asms.push(inst::sub_instruction(rd, lhs_reg, rhs_reg, context, id));
+            asms.push(func(rd, lhs_reg, rhs_reg, context, id));
+        }
+        match self.op() {
+            KBinaryOp::Add => {
+                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::add_instruction);
+            }
+            KBinaryOp::Sub => {
+                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::sub_instruction);
+            }
+            KBinaryOp::Mul => {
+                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::mul_instruction);
+            }
+            KBinaryOp::Div => {
+                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::div_instruction);
+            }
+            KBinaryOp::Mod => {
+                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::rem_instruction);
             }
             KBinaryOp::Eq => {
+                // don't apply binary_op_helper
                 asms.push(inst::xor_instruction(
                     lhs_reg, lhs_reg, rhs_reg, context, id,
                 ));

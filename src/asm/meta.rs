@@ -28,7 +28,11 @@ pub const REGISTER_ID_NAMES: [&str; REGISTER_COUNT] = [
 pub const INST_LOAD_IMMEDIATE: &str = "li";
 pub const INST_RETURN: &str = "ret";
 pub const INST_MOVE: &str = "mv";
+pub const INST_ADDITION: &str = "add";
 pub const INST_SUBTRACTION: &str = "sub";
+pub const INST_MULTIPLICATION: &str = "mul";
+pub const INST_DIVISION: &str = "div";
+pub const INST_MODULO: &str = "rem";
 pub const INST_XOR: &str = "xor";
 pub const INST_SET_IF_EQUAL_TO_ZERO: &str = "seqz";
 
@@ -264,7 +268,27 @@ pub enum RiscvInstruction {
         dest: Register,
         src: Register,
     },
+    Add {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
     Sub {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Mul {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Div {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Mod {
         dest: Register,
         src1: Register,
         src2: Register,
@@ -278,6 +302,20 @@ pub enum RiscvInstruction {
         dest: Register,
         src: Register,
     },
+}
+
+macro_rules! binary_inst_format {
+    ($asm:ident, $dest:expr, $src1:expr, $src2:expr, $f:expr) => {
+        write!(
+            $f,
+            "{}{} {}, {}, {}",
+            INDENT,
+            $asm,
+            $dest.name(),
+            $src1.name(),
+            $src2.name()
+        )
+    };
 }
 
 impl Display for RiscvInstruction {
@@ -297,16 +335,20 @@ impl Display for RiscvInstruction {
             RiscvInstruction::Mv { dest, src } => {
                 write!(f, "{}{} {}, {}", INDENT, INST_MOVE, dest.name(), src.name())
             }
+            RiscvInstruction::Add { dest, src1, src2 } => {
+                binary_inst_format!(INST_ADDITION, dest, src1, src2, f)
+            }
             RiscvInstruction::Sub { dest, src1, src2 } => {
-                write!(
-                    f,
-                    "{}{} {}, {}, {}",
-                    INDENT,
-                    INST_SUBTRACTION,
-                    dest.name(),
-                    src1.name(),
-                    src2.name()
-                )
+                binary_inst_format!(INST_SUBTRACTION, dest, src1, src2, f)
+            }
+            RiscvInstruction::Mul { dest, src1, src2 } => {
+                binary_inst_format!(INST_MULTIPLICATION, dest, src1, src2, f)
+            }
+            RiscvInstruction::Div { dest, src1, src2 } => {
+                binary_inst_format!(INST_DIVISION, dest, src1, src2, f)
+            }
+            RiscvInstruction::Mod { dest, src1, src2 } => {
+                binary_inst_format!(INST_MODULO, dest, src1, src2, f)
             }
             RiscvInstruction::Xor { dest, src1, src2 } => {
                 write!(
