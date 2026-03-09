@@ -12,7 +12,7 @@ use std::{
 
 use lalrpop_util::lexer::Token;
 
-use crate::{asm::generate_asm, parse::Ast};
+use crate::{asm::{generate_asm, meta::RiscvAsm}, parse::Ast};
 
 #[derive(Debug, Clone)]
 pub struct OwnedToken(pub usize, pub String);
@@ -94,7 +94,7 @@ pub fn ast_to_ir(ast: Ast) -> ir::Ast {
     ast.into()
 }
 
-pub fn ir_to_asm(ir: ir::Ast) -> Vec<String> {
+pub fn ir_to_asm(ir: ir::Ast) -> Vec<RiscvAsm> {
     generate_asm(ir.program())
 }
 

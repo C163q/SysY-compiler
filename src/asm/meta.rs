@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
+    collections::{BTreeSet, HashMap, HashSet},
+    fmt::{self, Debug, Display},
+    mem,
 };
 
 use koopa::ir::{FunctionData, Value};
@@ -12,17 +13,27 @@ pub const TEXT_SECTION: &str = ".text";
 pub const GLOBAL_SYMBOL: &str = ".globl";
 
 pub const REGISTER_COUNT: usize = 32;
-pub const REGISTER_NAMES: [&str; REGISTER_COUNT] = [
+pub const REGISTER_ABI_NAMES: [&str; REGISTER_COUNT] = [
     "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
     "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4",
     "t5", "t6",
 ];
 
+pub const REGISTER_ID_NAMES: [&str; REGISTER_COUNT] = [
+    "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14",
+    "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27",
+    "x28", "x29", "x30", "x31",
+];
+
 pub const INST_LOAD_IMMEDIATE: &str = "li";
 pub const INST_RETURN: &str = "ret";
+pub const INST_MOVE: &str = "mv";
+pub const INST_SUBTRACTION: &str = "sub";
+pub const INST_XOR: &str = "xor";
+pub const INST_SET_IF_EQUAL_TO_ZERO: &str = "seqz";
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Register {
     /// x0，恒为0
     Zero = 0,
@@ -71,16 +82,136 @@ pub enum Register {
     T6,
 }
 
+impl From<u8> for Register {
+    fn from(value: u8) -> Self {
+        if value >= REGISTER_COUNT as u8 {
+            panic!("Invaild register")
+        }
+        // SAFETY:
+        // We ensure that value is in the range of 0-31
+        unsafe { mem::transmute(value) }
+    }
+}
+
+impl Register {
+    pub fn is_caller_saved(&self) -> bool {
+        matches!(
+            self,
+            Register::Ra
+                | Register::T0
+                | Register::T1
+                | Register::T2
+                | Register::A0
+                | Register::A1
+                | Register::A2
+                | Register::A3
+                | Register::A4
+                | Register::A5
+                | Register::A6
+                | Register::A7
+                | Register::T3
+                | Register::T4
+                | Register::T5
+                | Register::T6
+        )
+    }
+}
+
 impl Register {
     pub fn name(&self) -> &'static str {
-        REGISTER_NAMES[*self as u8 as usize]
+        REGISTER_ABI_NAMES[*self as u8 as usize]
+    }
+
+    pub fn name_id(&self) -> &'static str {
+        REGISTER_ID_NAMES[*self as u8 as usize]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RegisterValue {
+    InstRet(Value),
+    Const,
+}
+
+#[derive(Debug)]
+pub struct RegisterMapper {
+    map: HashMap<Value, HashSet<Register>>,
+    usage: HashMap<Register, RegisterValue>,
+}
+
+impl Default for RegisterMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RegisterMapper {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            usage: HashMap::new(),
+        }
+    }
+
+    pub fn get_available_registers(&self) -> BTreeSet<Register> {
+        let used_registers: HashSet<Register> = self.usage.keys().cloned().collect();
+        (0..REGISTER_COUNT)
+            .map(|i| Register::from(i as u8))
+            .filter(|reg| !used_registers.contains(reg))
+            .collect()
+    }
+
+    pub fn get_available_registers_filtered<F>(&self, filter: F) -> BTreeSet<Register>
+    where
+        F: Fn(&Register) -> bool,
+    {
+        let used_registers: HashSet<Register> = self.usage.keys().cloned().collect();
+        (0..REGISTER_COUNT)
+            .map(|i| Register::from(i as u8))
+            .filter(|reg| !used_registers.contains(reg) && filter(reg))
+            .collect()
+    }
+
+    pub fn decl_register(&mut self, register: Register) {
+        self.usage.insert(register, RegisterValue::Const);
+    }
+
+    pub fn insert(&mut self, value: RegisterValue, register: Register) {
+        if let RegisterValue::InstRet(val) = value {
+            self.map.entry(val).or_default().insert(register);
+        }
+        self.usage.insert(register, value);
+    }
+
+    pub fn remove(&mut self, value: Value, register: Register) {
+        self.map.entry(value).or_default().remove(&register);
+        self.usage.remove(&register);
+    }
+
+    pub fn remove_by_register(&mut self, register: Register) {
+        if let Some(val) = self.usage.remove(&register)
+            && let RegisterValue::InstRet(value) = val
+        {
+            self.map.entry(value).or_default().remove(&register);
+        }
+    }
+
+    pub fn get_by_value(&self, value: &Value) -> Option<&HashSet<Register>> {
+        self.map.get(value).filter(|set| !set.is_empty())
+    }
+
+    pub fn get_by_register(&self, register: &Register) -> Option<RegisterValue> {
+        self.usage.get(register).copied()
+    }
+
+    pub fn contains_value(&self, value: &Value) -> bool {
+        self.map.contains_key(value)
     }
 }
 
 pub struct FunctionContext<'a> {
     pub func_data: &'a FunctionData,
-    pub register_map: HashMap<Value, Register>,
-    pub register_usage: HashSet<Register>,
+    pub register_mapper: RegisterMapper,
     /// i32为偏移量
     pub memory_map: HashMap<Value, i32>,
 }
@@ -89,25 +220,18 @@ impl Debug for FunctionContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FunctionContext")
             .field("func_data", &"&FunctionData")
-            .field("register_map", &self.register_map)
-            .field("register_usage", &self.register_usage)
+            .field("register_map", &self.register_mapper)
             .field("memory_map", &self.memory_map)
             .finish()
     }
 }
 
 impl FunctionContext<'_> {
-    pub fn new<'a>(
-        func_data: &'a FunctionData,
-        register_map: HashMap<Value, Register>,
-        register_usage: HashSet<Register>,
-        memory_map: HashMap<Value, i32>,
-    ) -> FunctionContext<'a> {
+    pub fn new<'a>(func_data: &'a FunctionData) -> FunctionContext<'a> {
         FunctionContext {
             func_data,
-            register_map,
-            register_usage,
-            memory_map,
+            register_mapper: RegisterMapper::new(),
+            memory_map: HashMap::new(),
         }
     }
 }
@@ -117,10 +241,115 @@ impl FunctionContext<'_> {
 /// 对于某些IR数据，可能需要首先注册才行，否则无法直接使用它们的名字（例如函数）。
 pub trait ToAsm {
     /// 产生汇编代码，不负责注册。
-    fn to_asm(&self, func_data: Option<&mut FunctionContext<'_>>) -> Vec<String>;
+    fn to_asm(
+        &self,
+        func_data: Option<&mut FunctionContext<'_>>,
+        id: Option<Value>,
+    ) -> Vec<RiscvAsm>;
 
     /// 注册，对于某些全局数据，这是必须的步骤。
-    fn register(&self) -> Option<String> {
+    fn register(&self) -> Option<RiscvAsm> {
         None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RiscvInstruction {
+    Ret,
+    Li {
+        dest: Register,
+        imm: i32,
+    },
+    Mv {
+        dest: Register,
+        src: Register,
+    },
+    Sub {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Xor {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Seqz {
+        dest: Register,
+        src: Register,
+    },
+}
+
+impl Display for RiscvInstruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RiscvInstruction::Ret => write!(f, "{}{}", INDENT, INST_RETURN),
+            RiscvInstruction::Li { dest, imm } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_LOAD_IMMEDIATE,
+                    dest.name(),
+                    imm
+                )
+            }
+            RiscvInstruction::Mv { dest, src } => {
+                write!(f, "{}{} {}, {}", INDENT, INST_MOVE, dest.name(), src.name())
+            }
+            RiscvInstruction::Sub { dest, src1, src2 } => {
+                write!(
+                    f,
+                    "{}{} {}, {}, {}",
+                    INDENT,
+                    INST_SUBTRACTION,
+                    dest.name(),
+                    src1.name(),
+                    src2.name()
+                )
+            }
+            RiscvInstruction::Xor { dest, src1, src2 } => {
+                write!(
+                    f,
+                    "{}{} {}, {}, {}",
+                    INDENT,
+                    INST_XOR,
+                    dest.name(),
+                    src1.name(),
+                    src2.name()
+                )
+            }
+            RiscvInstruction::Seqz { dest, src } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_SET_IF_EQUAL_TO_ZERO,
+                    dest.name(),
+                    src.name()
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RiscvAsm {
+    Section(String),
+    Global(String),
+    Label(String),
+    Instruction(RiscvInstruction),
+    None, // for formatting
+}
+
+impl Display for RiscvAsm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RiscvAsm::Section(name) => write!(f, "{}{}", INDENT, name),
+            RiscvAsm::Global(name) => write!(f, "{}.globl {}", INDENT, name),
+            RiscvAsm::Label(name) => write!(f, "{}:", name),
+            RiscvAsm::Instruction(inst) => write!(f, "{}", inst),
+            RiscvAsm::None => Ok(()),
+        }
     }
 }
