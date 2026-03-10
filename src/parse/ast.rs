@@ -2,8 +2,6 @@ use std::fmt::{self, Display};
 
 use koopa::ir::Type;
 
-use crate::parse::types;
-
 #[derive(Debug, Clone)]
 pub struct CompUnit {
     pub func_def: FuncDef,
@@ -33,15 +31,15 @@ impl Display for CompUnit {
 /// ```
 #[derive(Debug, Clone)]
 pub struct FuncDef {
-    pub func_type: FuncType,
+    pub ret_type: BType,
     pub ident: String,
     pub block: Block,
 }
 
 impl FuncDef {
-    pub fn new(func_type: FuncType, ident: String, block: Block) -> Self {
+    pub fn new(ret_type: BType, ident: String, block: Block) -> Self {
         Self {
-            func_type,
+            ret_type,
             ident,
             block,
         }
@@ -50,36 +48,62 @@ impl FuncDef {
 
 impl Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}() {}", self.func_type, self.ident, self.block)
+        write!(f, "{} {}() {}", self.ret_type, self.ident, self.block)
     }
 }
 
-/// 一个块由多条语句组成。
+/// 一个块由多个项组成。
 ///
 /// ```c, ignore
 /// {   // block
-///     int a = 0;  // Stmt
+///     int a = 0;  // Decl
 ///     return a;   // Stmt
 /// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub stmt: Vec<Stmt>,
+    pub items: Vec<BlockItem>,
 }
 
 impl Block {
-    pub fn new(stmt: Vec<Stmt>) -> Self {
-        Self { stmt }
+    pub fn new(items: Vec<BlockItem>) -> Self {
+        Self { items }
     }
 }
 
 impl Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{{")?;
-        for stmt in &self.stmt {
+        for stmt in &self.items {
             write!(f, " {} ", stmt)?;
         }
         write!(f, "}}")
+    }
+}
+
+/// 项
+#[derive(Debug, Clone)]
+pub enum BlockItem {
+    Stmt(Stmt),
+    Decl(Decl),
+}
+
+impl BlockItem {
+    pub fn new_stmt(stmt: Stmt) -> Self {
+        Self::Stmt(stmt)
+    }
+
+    pub fn new_decl(decl: Decl) -> Self {
+        Self::Decl(decl)
+    }
+}
+
+impl Display for BlockItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BlockItem::Stmt(stmt) => write!(f, "{}", stmt),
+            BlockItem::Decl(decl) => write!(f, "{}", decl),
+        }
     }
 }
 
@@ -108,39 +132,146 @@ impl Display for Stmt {
     }
 }
 
-/// 函数的返回类型
+/// 常变量定义
 #[derive(Debug, Clone)]
-pub struct FuncType {
-    pub val: String,
+pub enum Decl {
+    Const(ConstDecl),
 }
 
-impl FuncType {
-    pub fn new(val: String) -> Self {
-        Self { val }
+impl Decl {
+    pub fn new_const(const_decl: ConstDecl) -> Self {
+        Self::Const(const_decl)
     }
 }
 
-impl From<FuncType> for Type {
-    fn from(func_type: FuncType) -> Self {
-        types::get_type(&func_type.val)
-    }
-}
-
-impl Display for FuncType {
+impl Display for Decl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.val)
+        match self {
+            Decl::Const(const_decl) => write!(f, "{}", const_decl),
+        }
+    }
+}
+
+/// 常量声明
+#[derive(Debug, Clone)]
+pub struct ConstDecl {
+    pub ty: BType,
+    pub def: Vec<ConstDef>,
+}
+
+impl ConstDecl {
+    pub fn new(ty: BType, def: Vec<ConstDef>) -> Self {
+        Self { ty, def }
+    }
+}
+
+impl Display for ConstDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "const {} ", self.ty)?;
+        for (i, def) in self.def.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", def)?;
+        }
+        Ok(())
+    }
+}
+
+/// 类型
+#[derive(Debug, Clone, Copy)]
+pub enum BType {
+    Int,
+}
+
+impl BType {
+    pub fn new_int() -> Self {
+        Self::Int
+    }
+}
+
+impl Display for BType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BType::Int => write!(f, "int"),
+        }
+    }
+}
+
+impl From<BType> for Type {
+    fn from(btype: BType) -> Self {
+        match btype {
+            BType::Int => Type::get_i32(),
+        }
+    }
+}
+
+/// 常量定义
+#[derive(Debug, Clone)]
+pub struct ConstDef {
+    pub ident: String,
+    pub init_val: ConstInitVal,
+}
+
+impl ConstDef {
+    pub fn new(ident: String, init_val: ConstInitVal) -> Self {
+        Self { ident, init_val }
+    }
+}
+
+impl Display for ConstDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} = {}", self.ident, self.init_val)
+    }
+}
+
+/// 常量初值
+#[derive(Debug, Clone)]
+pub struct ConstInitVal {
+    pub expr: ConstExpr,
+}
+
+impl ConstInitVal {
+    pub fn new(expr: ConstExpr) -> Self {
+        Self { expr }
+    }
+}
+
+impl Display for ConstInitVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expr)
+    }
+}
+
+/// 常量表达式
+#[derive(Debug, Clone)]
+pub struct ConstExpr {
+    pub expr: Expr,
+}
+
+impl ConstExpr {
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
+    }
+}
+
+impl Display for ConstExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expr)
     }
 }
 
 /// 表达式
 #[derive(Debug, Clone)]
 pub struct Expr {
-    pub expr: LOrExpr,
+    pub expr: Box<LOrExpr>,
 }
 
 impl Expr {
     pub fn new(expr: LOrExpr) -> Self {
-        Self { expr }
+        Self {
+            expr: Box::new(expr),
+        }
     }
 }
 
@@ -154,7 +285,7 @@ impl Display for Expr {
 #[derive(Debug, Clone)]
 pub enum LOrExpr {
     And(LAndExpr),
-    Binary(Box<LOrExpr>, LAndExpr),
+    Binary(Box<LOrExpr>, Box<LAndExpr>),
 }
 
 impl LOrExpr {
@@ -163,7 +294,7 @@ impl LOrExpr {
     }
 
     pub fn new_binary(left: LOrExpr, right: LAndExpr) -> Self {
-        Self::Binary(Box::new(left), right)
+        Self::Binary(Box::new(left), Box::new(right))
     }
 }
 
@@ -180,7 +311,7 @@ impl Display for LOrExpr {
 #[derive(Debug, Clone)]
 pub enum LAndExpr {
     Eq(EqExpr),
-    Binary(Box<LAndExpr>, EqExpr),
+    Binary(Box<LAndExpr>, Box<EqExpr>),
 }
 
 impl LAndExpr {
@@ -189,7 +320,7 @@ impl LAndExpr {
     }
 
     pub fn new_binary(left: LAndExpr, right: EqExpr) -> Self {
-        Self::Binary(Box::new(left), right)
+        Self::Binary(Box::new(left), Box::new(right))
     }
 }
 
@@ -205,8 +336,8 @@ impl Display for LAndExpr {
 /// 等于比较运算符
 #[derive(Debug, Clone, Copy)]
 pub enum EqOp {
-    Eq,     // ==
-    NotEq,  // !=
+    Eq,    // ==
+    NotEq, // !=
 }
 
 impl Display for EqOp {
@@ -222,7 +353,7 @@ impl Display for EqOp {
 #[derive(Debug, Clone)]
 pub enum EqExpr {
     Rel(RelExpr),
-    Binary(Box<EqExpr>, EqOp, RelExpr),
+    Binary(Box<EqExpr>, EqOp, Box<RelExpr>),
 }
 
 impl EqExpr {
@@ -231,7 +362,7 @@ impl EqExpr {
     }
 
     pub fn new_binary(left: EqExpr, op: EqOp, right: RelExpr) -> Self {
-        Self::Binary(Box::new(left), op, right)
+        Self::Binary(Box::new(left), op, Box::new(right))
     }
 }
 
@@ -268,7 +399,7 @@ impl Display for RelOp {
 #[derive(Debug, Clone)]
 pub enum RelExpr {
     Add(AddExpr),
-    Binary(Box<RelExpr>, RelOp, AddExpr),
+    Binary(Box<RelExpr>, RelOp, Box<AddExpr>),
 }
 
 impl RelExpr {
@@ -277,7 +408,7 @@ impl RelExpr {
     }
 
     pub fn new_binary(left: RelExpr, op: RelOp, right: AddExpr) -> Self {
-        Self::Binary(Box::new(left), op, right)
+        Self::Binary(Box::new(left), op, Box::new(right))
     }
 }
 
@@ -310,7 +441,7 @@ impl Display for AddOp {
 #[derive(Debug, Clone)]
 pub enum AddExpr {
     Mul(MulExpr),
-    Binary(Box<AddExpr>, AddOp, MulExpr),
+    Binary(Box<AddExpr>, AddOp, Box<MulExpr>),
 }
 
 impl AddExpr {
@@ -319,7 +450,7 @@ impl AddExpr {
     }
 
     pub fn new_binary(left: AddExpr, op: AddOp, right: MulExpr) -> Self {
-        Self::Binary(Box::new(left), op, right)
+        Self::Binary(Box::new(left), op, Box::new(right))
     }
 }
 
@@ -354,7 +485,7 @@ impl Display for MulOp {
 #[derive(Debug, Clone)]
 pub enum MulExpr {
     Unary(UnaryExpr),
-    Binary(Box<MulExpr>, MulOp, UnaryExpr),
+    Binary(Box<MulExpr>, MulOp, Box<UnaryExpr>),
 }
 
 impl MulExpr {
@@ -363,7 +494,7 @@ impl MulExpr {
     }
 
     pub fn new_binary(left: MulExpr, op: MulOp, right: UnaryExpr) -> Self {
-        Self::Binary(Box::new(left), op, right)
+        Self::Binary(Box::new(left), op, Box::new(right))
     }
 }
 
@@ -425,6 +556,7 @@ impl Display for UnaryExpr {
 pub enum PrimaryExpr {
     Num(Number),
     Expr(Box<Expr>),
+    LVal(LVal),
 }
 
 impl PrimaryExpr {
@@ -435,6 +567,10 @@ impl PrimaryExpr {
     pub fn new_expr(expr: Expr) -> Self {
         Self::Expr(Box::new(expr))
     }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::LVal(lval)
+    }
 }
 
 impl Display for PrimaryExpr {
@@ -442,7 +578,26 @@ impl Display for PrimaryExpr {
         match self {
             PrimaryExpr::Num(num) => write!(f, "{}", num),
             PrimaryExpr::Expr(expr) => write!(f, "({})", expr),
+            PrimaryExpr::LVal(lval) => write!(f, "{}", lval),
         }
+    }
+}
+
+/// 左值
+#[derive(Debug, Clone)]
+pub struct LVal {
+    pub ident: String,
+}
+
+impl LVal {
+    pub fn new(ident: String) -> Self {
+        Self { ident }
+    }
+}
+
+impl Display for LVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.ident)
     }
 }
 

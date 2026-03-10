@@ -2,12 +2,19 @@ use crate::parse::ast::{
     Block,
     CompUnit,
     FuncDef,
-    FuncType,
+    BType,
+    Decl,
+    ConstDecl,
+    ConstDef,
+    ConstInitVal,
+    BlockItem,
+    LVal,
     Stmt,
     Expr,
     UnaryOp,
     UnaryExpr,
     PrimaryExpr,
+    ConstExpr,
     Number,
     AddOp,
     AddExpr,
@@ -38,16 +45,40 @@ match {
 /// CompUnit ::= FuncDef;
 pub CompUnit: CompUnit = <FuncDef> => CompUnit::new(<>);
 
-/// FuncDef ::= FuncType IDENT "(" ")" Block;
+/// FuncDef ::= BType IDENT "(" ")" Block;
 FuncDef: FuncDef = {
-    <FuncType> <Ident> "(" ")" <Block> => FuncDef::new(<>),
+    <BType> <Ident> "(" ")" <Block> => FuncDef::new(<>),
 }
 
-/// FuncType ::= "int";
-FuncType: FuncType = "int" => FuncType::new(<>.to_string());
+/// Decl ::= ConstDecl;
+Decl: Decl = <ConstDecl> => Decl::new_const(<>);
 
-/// Block ::= "{" Stmt "}";
-Block: Block = "{" <Stmt> "}" => Block::new(vec![<>]);
+/// ConstDecl ::= "const" BType ConstDef ("," ConstDef)* ";";
+ConstDecl: ConstDecl = {
+    "const" <ty:BType> <def:ConstDef> <defs:("," <ConstDef>)*> ";" => {
+        let mut vec = vec![def];
+        vec.extend(defs);
+        ConstDecl::new(ty, vec)
+    }
+};
+
+/// BType ::= "int";
+BType: BType = "int" => BType::Int;
+
+/// ConstDef ::= IDENT "=" ConstInitVal;
+ConstDef: ConstDef = <Ident> "=" <ConstInitVal> => ConstDef::new(<>);
+
+/// ConstInitVal ::= ConstExp;
+ConstInitVal: ConstInitVal = <ConstExp> => ConstInitVal::new(<>);
+
+/// Block ::= "{" BlockItem* "}";
+Block: Block = "{" <items:(<BlockItem>)*> "}" => Block::new(items);
+
+/// BlockItem ::= Decl | Stmt;
+BlockItem: BlockItem = {
+    <Decl> => BlockItem::new_decl(<>),
+    <Stmt> => BlockItem::new_stmt(<>),
+};
 
 /// Stmt ::= "return" Number ";";
 Stmt: Stmt = "return" <Exp> ";" => Stmt::new_return(<>);
@@ -55,10 +86,14 @@ Stmt: Stmt = "return" <Exp> ";" => Stmt::new_return(<>);
 /// Exp ::= AddExp;
 Exp: Expr = <LOrExp> => Expr::new(<>);
 
+/// LVal ::= IDENT;
+LVal: LVal = <Ident> => LVal::new(<>);
+
 /// PrimaryExp ::= "(" Exp ")" | Number;
 PrimaryExp: PrimaryExpr = {
     "(" <Exp> ")" => PrimaryExpr::new_expr(<>),
     <Number> => PrimaryExpr::new_num(<>),
+    <LVal> => PrimaryExpr::new_lval(<>),
 };
 
 /// Number ::= INT_CONST;
@@ -139,6 +174,9 @@ LOrExp: LOrExpr = {
     <LAndExp> => LOrExpr::new_and(<>),
     <LOrExp> "||" <LAndExp> => LOrExpr::new_binary(<>),
 };
+
+/// ConstExp ::= Exp;
+ConstExp: ConstExpr = <Exp> => ConstExpr::new(<>);
 
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 

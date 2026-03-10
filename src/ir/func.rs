@@ -5,8 +5,8 @@ use koopa::ir::{
 };
 
 use crate::{
-    ir::meta::{Instruction, IntoIr},
-    parse::ast,
+    ir::meta::{ConstValue, Instruction, IntoIr, VariableManager},
+    parse::ast::{self, BType},
 };
 
 pub struct BlockFlow {
@@ -32,7 +32,7 @@ impl ast::FuncDef {
     /// Add a new function in program without parsing its body.
     pub fn register_func(&self, program: &mut Program) -> Function {
         let data = {
-            let ret_type = self.func_type.clone().into();
+            let ret_type = self.ret_type.into();
             let func_name = format!("@{}", self.ident);
             FunctionData::with_param_names(func_name, vec![], ret_type)
         };
@@ -53,33 +53,81 @@ impl ast::Block {
     }
 }
 
+impl IntoIr for ast::BlockItem {
+    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
+        match self {
+            ast::BlockItem::Stmt(stmt) => stmt.into_ir(dfg, manager),
+            ast::BlockItem::Decl(decl) => decl.into_ir(dfg, manager),
+        }
+    }
+}
+
+impl IntoIr for ast::Decl {
+    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
+        match self {
+            ast::Decl::Const(decl) => decl.into_ir(dfg, manager),
+        }
+    }
+}
+
+impl IntoIr for ast::ConstDecl {
+    fn into_ir(self, _dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
+        let ty = self.ty;
+        let defs = self.def;
+        for def in defs {
+            let ident = def.ident;
+            match ty {
+                BType::Int => match def.init_val.const_eval_i32(manager) {
+                    Some(value) => {
+                        manager
+                            .define_const(ident, ConstValue::Int(value))
+                            .unwrap_or_else(|e| {
+                                panic!("Error defining constant: {}", e)
+                            });
+                    }
+                    None => {
+                        panic!(
+                            "Initialization value for constant '{}' is not a constant expression",
+                            ident
+                        );
+                    }
+                },
+            }
+        }
+
+        vec![]
+    }
+}
+
 impl IntoIr for ast::Stmt {
-    fn into_ir(self, dfg: &mut DataFlowGraph) -> Vec<Instruction> {
-        #[allow(clippy::match_single_binding)]
+    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
         match self {
             ast::Stmt::Return(expr) => {
                 let mut vec = vec![];
-                let expr_values = expr.into_ir(dfg);
+                let expr_values = expr.into_ir(dfg, manager);
                 let some_last = expr_values.last().copied();
                 vec.extend(expr_values);
                 let ret = dfg.new_value().ret(some_last.map(|v| *v.inst()));
                 vec.push(Instruction::new(ret, true));
                 vec
             }
-            _ => {
-                unimplemented!()
-            }
+            // TODO: support more statements.
         }
     }
 }
 
 fn build_blocks(block: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
+    // Currently, we only support a single basic block for each function, so we can directly build
+    // the entry block and VariableManager.
     let mut entry = {
         let block = dfg.new_bb().basic_block(Some("%entry".to_string()));
         BlockFlow::new(block, vec![])
     };
-    block.stmt.into_iter().for_each(|stmt| {
-        let values = stmt.into_ir(dfg);
+
+    let mut manager = VariableManager::new();
+
+    block.items.into_iter().for_each(|item| {
+        let values = item.into_ir(dfg, &mut manager);
         entry.values.extend(
             values
                 .into_iter()
