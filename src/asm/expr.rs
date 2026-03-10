@@ -48,6 +48,16 @@ pub fn get_value(
     }
 }
 
+pub fn obtain_caller_directly_usable_register(context: &FunctionContext) -> Register {
+    let available_registers = context
+        .register_mapper
+        .get_available_registers_filtered(|r| r.caller_directly_usable());
+    *available_registers
+        .iter()
+        .next()
+        .expect("No available register")
+}
+
 impl ToAsm for Integer {
     fn to_asm(
         &self,
@@ -58,18 +68,8 @@ impl ToAsm for Integer {
         // register with this function.
         let context = func_data.expect("FunctionContext not found for Integer");
         let id = id.expect("Value not found for Integer");
-        let available_registers = context
-            .register_mapper
-            .get_available_registers_filtered(|r| r.is_caller_saved());
-        vec![inst::li_instruction(
-            *available_registers
-                .iter()
-                .next()
-                .expect("No available register"),
-            self.value(),
-            context,
-            id,
-        )]
+        let rd = obtain_caller_directly_usable_register(context);
+        vec![inst::li_instruction(rd, self.value(), context, Some(id))]
     }
 }
 
@@ -92,7 +92,7 @@ impl ToAsm for Return {
                             .next()
                             .expect("No register assigned for return value"),
                         context,
-                        id,
+                        Some(id),
                     ));
                 }
                 asms.push(inst::ret_instruction());
@@ -128,42 +128,160 @@ impl ToAsm for Binary {
             id: Value,
             asms: &mut Vec<RiscvAsm>,
             func: F,
-        )
-        where
-            F: Fn(Register, Register, Register, &mut FunctionContext, Value) -> RiscvAsm,
+        ) where
+            F: Fn(Register, Register, Register, &mut FunctionContext, Option<Value>) -> RiscvAsm,
         {
-            let available_registers = context
-                .register_mapper
-                .get_available_registers_filtered(|r| r.is_caller_saved());
-            let rd = *available_registers
-                .iter()
-                .next()
-                .expect("No available register");
-
-            asms.push(func(rd, lhs_reg, rhs_reg, context, id));
+            // TODO: Temporarily disable this call because we can't make use of the stack yet.
+            // let rd = obtain_caller_directly_usable_register(context);
+            // asms.push(func(rd, lhs_reg, rhs_reg, context, id));
+            if lhs_reg.caller_directly_usable() {
+                asms.push(func(lhs_reg, lhs_reg, rhs_reg, context, Some(id)));
+            } else {
+                let rd = obtain_caller_directly_usable_register(context);
+                asms.push(func(rd, lhs_reg, rhs_reg, context, Some(id)));
+            }
         }
+
         match self.op() {
             KBinaryOp::Add => {
-                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::add_instruction);
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::add_instruction,
+                );
             }
             KBinaryOp::Sub => {
-                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::sub_instruction);
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::sub_instruction,
+                );
             }
             KBinaryOp::Mul => {
-                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::mul_instruction);
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::mul_instruction,
+                );
             }
             KBinaryOp::Div => {
-                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::div_instruction);
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::div_instruction,
+                );
             }
             KBinaryOp::Mod => {
-                binary_op_helper(lhs_reg, rhs_reg, context, id, &mut asms, inst::rem_instruction);
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::rem_instruction,
+                );
+            }
+            KBinaryOp::And => {
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::and_instruction,
+                );
+            }
+            KBinaryOp::Or => {
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::or_instruction,
+                );
+            }
+            KBinaryOp::Xor => {
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::xor_instruction,
+                );
             }
             KBinaryOp::Eq => {
-                // don't apply binary_op_helper
-                asms.push(inst::xor_instruction(
-                    lhs_reg, lhs_reg, rhs_reg, context, id,
-                ));
-                asms.push(inst::seqz_instruction(lhs_reg, lhs_reg, context, id));
+                let rd = obtain_caller_directly_usable_register(context);
+
+                if rhs_reg == Register::Zero {
+                    asms.push(inst::seqz_instruction(rd, lhs_reg, context, Some(id)));
+                } else if lhs_reg == Register::Zero {
+                    asms.push(inst::seqz_instruction(rd, rhs_reg, context, Some(id)));
+                } else {
+                    // don't apply binary_op_helper
+                    asms.push(inst::xor_instruction(
+                        lhs_reg, lhs_reg, rhs_reg, context, None,
+                    ));
+                    asms.push(inst::seqz_instruction(rd, lhs_reg, context, Some(id)));
+                }
+            }
+            KBinaryOp::NotEq => {
+                let rd = obtain_caller_directly_usable_register(context);
+
+                if rhs_reg == Register::Zero {
+                    asms.push(inst::snez_instruction(rd, lhs_reg, context, Some(id)));
+                } else if lhs_reg == Register::Zero {
+                    asms.push(inst::snez_instruction(rd, rhs_reg, context, Some(id)));
+                } else {
+                    // don't apply binary_op_helper
+                    asms.push(inst::xor_instruction(
+                        lhs_reg, lhs_reg, rhs_reg, context, None,
+                    ));
+                    asms.push(inst::snez_instruction(rd, lhs_reg, context, Some(id)));
+                }
+            }
+            KBinaryOp::Gt => {
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::sgt_instruction,
+                );
+            }
+            KBinaryOp::Lt => {
+                binary_op_helper(
+                    lhs_reg,
+                    rhs_reg,
+                    context,
+                    id,
+                    &mut asms,
+                    inst::slt_instruction,
+                );
+            }
+            KBinaryOp::Ge => {
+                let rd = obtain_caller_directly_usable_register(context);
+                asms.push(inst::slt_instruction(rd, lhs_reg, rhs_reg, context, None));
+                asms.push(inst::seqz_instruction(rd, rd, context, Some(id)));
+            }
+            KBinaryOp::Le => {
+                let rd = obtain_caller_directly_usable_register(context);
+                asms.push(inst::sgt_instruction(rd, lhs_reg, rhs_reg, context, None));
+                asms.push(inst::seqz_instruction(rd, rd, context, Some(id)));
             }
             _ => unimplemented!(),
         }

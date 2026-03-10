@@ -13,6 +13,12 @@ use crate::parse::ast::{
     AddExpr,
     MulOp,
     MulExpr,
+    RelOp,
+    RelExpr,
+    EqOp,
+    EqExpr,
+    LAndExpr,
+    LOrExpr,
 };
 
 grammar;
@@ -47,7 +53,7 @@ Block: Block = "{" <Stmt> "}" => Block::new(vec![<>]);
 Stmt: Stmt = "return" <Exp> ";" => Stmt::new_return(<>);
 
 /// Exp ::= AddExp;
-Exp: Expr = <AddExp> => Expr::new(<>);
+Exp: Expr = <LOrExp> => Expr::new(<>);
 
 /// PrimaryExp ::= "(" Exp ")" | Number;
 PrimaryExp: PrimaryExpr = {
@@ -95,6 +101,44 @@ AddExp: AddExpr = {
     <MulExp> => AddExpr::new_mul(<>),
     <AddExp> <AddOp> <MulExp> => AddExpr::new_binary(<>),
 }
+
+/// RelOp ::= "<" | ">" | "<=" | ">=";
+RelOp: RelOp = {
+    "<" => RelOp::Lt,
+    ">" => RelOp::Gt,
+    "<=" => RelOp::Le,
+    ">=" => RelOp::Ge,
+};
+
+/// RelExp ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
+RelExp: RelExpr = {
+    <AddExp> => RelExpr::new_add(<>),
+    <RelExp> <RelOp> <AddExp> => RelExpr::new_binary(<>),
+}
+
+/// EqOp ::= "==" | "!=";
+EqOp: EqOp = {
+    "==" => EqOp::Eq,
+    "!=" => EqOp::NotEq,
+};
+
+/// EqExp ::= RelExp | EqExp ("==" | "!=") RelExp;
+EqExp: EqExpr = {
+    <RelExp> => EqExpr::new_rel(<>),
+    <EqExp> <EqOp> <RelExp> => EqExpr::new_binary(<>),
+}
+
+/// LAndExp ::= EqExp | LAndExp "&&" EqExp;
+LAndExp: LAndExpr = {
+    <EqExp> => LAndExpr::new_eq(<>),
+    <LAndExp> "&&" <EqExp> => LAndExpr::new_binary(<>),
+};
+
+/// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp: LOrExpr = {
+    <LAndExp> => LOrExpr::new_and(<>),
+    <LOrExp> "||" <LAndExp> => LOrExpr::new_binary(<>),
+};
 
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 

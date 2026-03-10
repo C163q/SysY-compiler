@@ -33,8 +33,13 @@ pub const INST_SUBTRACTION: &str = "sub";
 pub const INST_MULTIPLICATION: &str = "mul";
 pub const INST_DIVISION: &str = "div";
 pub const INST_MODULO: &str = "rem";
+pub const INST_AND: &str = "and";
+pub const INST_OR: &str = "or";
 pub const INST_XOR: &str = "xor";
 pub const INST_SET_IF_EQUAL_TO_ZERO: &str = "seqz";
+pub const INST_SET_IF_NOT_EQUAL_TO_ZERO: &str = "snez";
+pub const INST_SET_IF_LESS_THAN: &str = "slt";
+pub const INST_SET_IF_GREATER_THAN: &str = "sgt";
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -119,6 +124,27 @@ impl Register {
                 | Register::T6
         )
     }
+
+    pub fn caller_directly_usable(&self) -> bool {
+        matches!(
+            self,
+            Register::T0
+                | Register::T1
+                | Register::T2
+                | Register::A0
+                | Register::A1
+                | Register::A2
+                | Register::A3
+                | Register::A4
+                | Register::A5
+                | Register::A6
+                | Register::A7
+                | Register::T3
+                | Register::T4
+                | Register::T5
+                | Register::T6
+        )
+    }
 }
 
 impl Register {
@@ -158,11 +184,7 @@ impl RegisterMapper {
     }
 
     pub fn get_available_registers(&self) -> BTreeSet<Register> {
-        let used_registers: HashSet<Register> = self.usage.keys().cloned().collect();
-        (0..REGISTER_COUNT)
-            .map(|i| Register::from(i as u8))
-            .filter(|reg| !used_registers.contains(reg))
-            .collect()
+        self.get_available_registers_filtered(|_| true)
     }
 
     pub fn get_available_registers_filtered<F>(&self, filter: F) -> BTreeSet<Register>
@@ -173,6 +195,27 @@ impl RegisterMapper {
         (0..REGISTER_COUNT)
             .map(|i| Register::from(i as u8))
             .filter(|reg| !used_registers.contains(reg) && filter(reg))
+            .collect()
+    }
+
+    /// This function will not obtain registers that are currently mapped to the given values.
+    pub fn get_registers_filtered_by_value<F>(
+        &self,
+        value: &[Value],
+        filter: F,
+    ) -> BTreeSet<Register>
+    where
+        F: Fn(&Register) -> bool,
+    {
+        let registers: HashSet<Register> = value
+            .iter()
+            .filter_map(|v| self.map.get(v))
+            .flatten()
+            .cloned()
+            .collect();
+        (0..REGISTER_COUNT)
+            .map(|i| Register::from(i as u8))
+            .filter(|reg| !registers.contains(reg) && filter(reg))
             .collect()
     }
 
@@ -293,6 +336,16 @@ pub enum RiscvInstruction {
         src1: Register,
         src2: Register,
     },
+    And {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Or {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
     Xor {
         dest: Register,
         src1: Register,
@@ -301,6 +354,20 @@ pub enum RiscvInstruction {
     Seqz {
         dest: Register,
         src: Register,
+    },
+    Snez {
+        dest: Register,
+        src: Register,
+    },
+    Slt {
+        dest: Register,
+        src1: Register,
+        src2: Register,
+    },
+    Sgt {
+        dest: Register,
+        src1: Register,
+        src2: Register,
     },
 }
 
@@ -350,16 +417,14 @@ impl Display for RiscvInstruction {
             RiscvInstruction::Mod { dest, src1, src2 } => {
                 binary_inst_format!(INST_MODULO, dest, src1, src2, f)
             }
+            RiscvInstruction::And { dest, src1, src2 } => {
+                binary_inst_format!(INST_AND, dest, src1, src2, f)
+            }
+            RiscvInstruction::Or { dest, src1, src2 } => {
+                binary_inst_format!(INST_OR, dest, src1, src2, f)
+            }
             RiscvInstruction::Xor { dest, src1, src2 } => {
-                write!(
-                    f,
-                    "{}{} {}, {}, {}",
-                    INDENT,
-                    INST_XOR,
-                    dest.name(),
-                    src1.name(),
-                    src2.name()
-                )
+                binary_inst_format!(INST_XOR, dest, src1, src2, f)
             }
             RiscvInstruction::Seqz { dest, src } => {
                 write!(
@@ -370,6 +435,22 @@ impl Display for RiscvInstruction {
                     dest.name(),
                     src.name()
                 )
+            }
+            RiscvInstruction::Snez { dest, src } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_SET_IF_NOT_EQUAL_TO_ZERO,
+                    dest.name(),
+                    src.name()
+                )
+            }
+            RiscvInstruction::Slt { dest, src1, src2 } => {
+                binary_inst_format!(INST_SET_IF_LESS_THAN, dest, src1, src2, f)
+            }
+            RiscvInstruction::Sgt { dest, src1, src2 } => {
+                binary_inst_format!(INST_SET_IF_GREATER_THAN, dest, src1, src2, f)
             }
         }
     }

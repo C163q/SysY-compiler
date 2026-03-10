@@ -135,11 +135,11 @@ impl Display for FuncType {
 /// 表达式
 #[derive(Debug, Clone)]
 pub struct Expr {
-    pub expr: AddExpr,
+    pub expr: LOrExpr,
 }
 
 impl Expr {
-    pub fn new(expr: AddExpr) -> Self {
+    pub fn new(expr: LOrExpr) -> Self {
         Self { expr }
     }
 }
@@ -147,6 +147,146 @@ impl Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.expr)
+    }
+}
+
+/// 或
+#[derive(Debug, Clone)]
+pub enum LOrExpr {
+    And(LAndExpr),
+    Binary(Box<LOrExpr>, LAndExpr),
+}
+
+impl LOrExpr {
+    pub fn new_and(and: LAndExpr) -> Self {
+        Self::And(and)
+    }
+
+    pub fn new_binary(left: LOrExpr, right: LAndExpr) -> Self {
+        Self::Binary(Box::new(left), right)
+    }
+}
+
+impl Display for LOrExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LOrExpr::And(and) => write!(f, "{}", and),
+            LOrExpr::Binary(left, right) => write!(f, "{} || {}", left, right),
+        }
+    }
+}
+
+/// 与
+#[derive(Debug, Clone)]
+pub enum LAndExpr {
+    Eq(EqExpr),
+    Binary(Box<LAndExpr>, EqExpr),
+}
+
+impl LAndExpr {
+    pub fn new_eq(eq: EqExpr) -> Self {
+        Self::Eq(eq)
+    }
+
+    pub fn new_binary(left: LAndExpr, right: EqExpr) -> Self {
+        Self::Binary(Box::new(left), right)
+    }
+}
+
+impl Display for LAndExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LAndExpr::Eq(eq) => write!(f, "{}", eq),
+            LAndExpr::Binary(left, right) => write!(f, "{} && {}", left, right),
+        }
+    }
+}
+
+/// 等于比较运算符
+#[derive(Debug, Clone, Copy)]
+pub enum EqOp {
+    Eq,     // ==
+    NotEq,  // !=
+}
+
+impl Display for EqOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EqOp::Eq => write!(f, "=="),
+            EqOp::NotEq => write!(f, "!="),
+        }
+    }
+}
+
+/// 等于比较表达式
+#[derive(Debug, Clone)]
+pub enum EqExpr {
+    Rel(RelExpr),
+    Binary(Box<EqExpr>, EqOp, RelExpr),
+}
+
+impl EqExpr {
+    pub fn new_rel(rel: RelExpr) -> Self {
+        Self::Rel(rel)
+    }
+
+    pub fn new_binary(left: EqExpr, op: EqOp, right: RelExpr) -> Self {
+        Self::Binary(Box::new(left), op, right)
+    }
+}
+
+impl Display for EqExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EqExpr::Rel(rel) => write!(f, "{}", rel),
+            EqExpr::Binary(left, op, right) => write!(f, "{} {} {}", left, op, right),
+        }
+    }
+}
+
+/// 比较运算符
+#[derive(Debug, Clone, Copy)]
+pub enum RelOp {
+    Lt, // <
+    Gt, // >
+    Le, // <=
+    Ge, // >=
+}
+
+impl Display for RelOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RelOp::Lt => write!(f, "<"),
+            RelOp::Gt => write!(f, ">"),
+            RelOp::Le => write!(f, "<="),
+            RelOp::Ge => write!(f, ">="),
+        }
+    }
+}
+
+/// 比较表达式
+#[derive(Debug, Clone)]
+pub enum RelExpr {
+    Add(AddExpr),
+    Binary(Box<RelExpr>, RelOp, AddExpr),
+}
+
+impl RelExpr {
+    pub fn new_add(add: AddExpr) -> Self {
+        Self::Add(add)
+    }
+
+    pub fn new_binary(left: RelExpr, op: RelOp, right: AddExpr) -> Self {
+        Self::Binary(Box::new(left), op, right)
+    }
+}
+
+impl Display for RelExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RelExpr::Add(add) => write!(f, "{}", add),
+            RelExpr::Binary(left, op, right) => write!(f, "{} {} {}", left, op, right),
+        }
     }
 }
 
