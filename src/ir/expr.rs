@@ -19,6 +19,7 @@ impl IntoIr for ast::Expr {
     }
 }
 
+/// 通过左侧表达式和右侧表达式的IR生成二元表达式的IR。
 fn binary_op_helper(
     op: BinaryOp,
     lhs_val: Vec<Instruction>,
@@ -28,6 +29,7 @@ fn binary_op_helper(
     let mut vec = vec![];
     let comp = dfg.new_value().binary(
         op,
+        // 左侧表达式和右侧表达式最后一个指令的结果分别为两者的值。
         *lhs_val
             .last()
             .copied()
@@ -45,6 +47,7 @@ fn binary_op_helper(
     vec
 }
 
+/// 针对不同二元运算符求取左右表达式的IR并生成二元表达式的IR。
 macro_rules! impl_into_ir_for_binary_expr {
     ($expr_ty:tt, $next_level:tt, $op_ty:tt; $( $op:tt ),*) => {
         fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
@@ -72,6 +75,7 @@ macro_rules! impl_into_ir_for_binary_expr {
     };
 }
 
+/// 若二元表达式的左右表达式都能在编译期求出i32值，则求出该二元表达式的i32值。
 macro_rules! impl_const_eval_i32_for_binary_expr {
     ($expr_ty:tt, $next_level:tt, $op_ty:tt; $( $op:tt, $sym:tt ),*) => {
         fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
@@ -298,11 +302,17 @@ impl IntoIr for ast::LVal {
     fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
         match manager.get(&self.ident) {
             Some(var) => match var {
+                // 若为常量，直接取得其常量值且不产生对应IR。
                 Variable::Const(val) => match val {
                     ConstValue::Int(val) => {
                         vec![Instruction::new(dfg.new_value().integer(*val), false)]
                     }
                 },
+                // 若为变量，产生load指令来取得其值。
+                Variable::Var(var) => {
+                    let load = dfg.new_value().load(*var.value());
+                    vec![Instruction::new(load, true)]
+                }
             },
             None => panic!("Variable '{}' not defined", self.ident),
         }
@@ -314,6 +324,8 @@ impl IntoIr for ast::LVal {
                 Variable::Const(val) => match val {
                     ConstValue::Int(val) => Some(*val),
                 },
+                // 变量不允许在编译期求值。
+                Variable::Var(_) => None,
             },
             None => None,
         }

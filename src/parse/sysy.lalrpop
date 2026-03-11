@@ -7,6 +7,9 @@ use crate::parse::ast::{
     ConstDecl,
     ConstDef,
     ConstInitVal,
+    VarDecl,
+    VarDef,
+    InitVal,
     BlockItem,
     LVal,
     Stmt,
@@ -51,7 +54,10 @@ FuncDef: FuncDef = {
 }
 
 /// Decl ::= ConstDecl;
-Decl: Decl = <ConstDecl> => Decl::new_const(<>);
+Decl: Decl = {
+    <ConstDecl> => Decl::new_const(<>),
+    <VarDecl> => Decl::new_var(<>),
+}
 
 /// ConstDecl ::= "const" BType ConstDef ("," ConstDef)* ";";
 ConstDecl: ConstDecl = {
@@ -60,7 +66,7 @@ ConstDecl: ConstDecl = {
         vec.extend(defs);
         ConstDecl::new(ty, vec)
     }
-};
+}
 
 /// BType ::= "int";
 BType: BType = "int" => BType::Int;
@@ -71,6 +77,24 @@ ConstDef: ConstDef = <Ident> "=" <ConstInitVal> => ConstDef::new(<>);
 /// ConstInitVal ::= ConstExp;
 ConstInitVal: ConstInitVal = <ConstExp> => ConstInitVal::new(<>);
 
+/// VarDecl ::= BType VarDef ("," VarDef)* ";";
+VarDecl: VarDecl = {
+    <ty:BType> <def:VarDef> <defs:("," <VarDef>)*> ";" => {
+        let mut vec = vec![def];
+        vec.extend(defs);
+        VarDecl::new(ty, vec)
+    }
+}
+
+/// VarDef ::= IDENT | IDENT "=" InitVal;
+VarDef: VarDef = {
+    <ident:Ident> => VarDef::new(ident, None),
+    <ident:Ident> "=" <init:InitVal> => VarDef::new(ident, Some(init)),
+}
+
+/// InitVal ::= Exp;
+InitVal: InitVal = <Exp> => InitVal::new(<>);
+
 /// Block ::= "{" BlockItem* "}";
 Block: Block = "{" <items:(<BlockItem>)*> "}" => Block::new(items);
 
@@ -78,10 +102,13 @@ Block: Block = "{" <items:(<BlockItem>)*> "}" => Block::new(items);
 BlockItem: BlockItem = {
     <Decl> => BlockItem::new_decl(<>),
     <Stmt> => BlockItem::new_stmt(<>),
-};
+}
 
 /// Stmt ::= "return" Number ";";
-Stmt: Stmt = "return" <Exp> ";" => Stmt::new_return(<>);
+Stmt: Stmt = {
+    <LVal> "=" <Exp> ";" => Stmt::new_assign(<>),
+    "return" <Exp> ";" => Stmt::new_return(<>),
+}
 
 /// Exp ::= AddExp;
 Exp: Expr = <LOrExp> => Expr::new(<>);
@@ -117,7 +144,7 @@ MulOp: MulOp = {
     "*" => MulOp::Mul,
     "/" => MulOp::Div,
     "%" => MulOp::Mod,
-};
+}
 
 /// MulExp ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
 MulExp: MulExpr = {
@@ -143,7 +170,7 @@ RelOp: RelOp = {
     ">" => RelOp::Gt,
     "<=" => RelOp::Le,
     ">=" => RelOp::Ge,
-};
+}
 
 /// RelExp ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
 RelExp: RelExpr = {
@@ -155,7 +182,7 @@ RelExp: RelExpr = {
 EqOp: EqOp = {
     "==" => EqOp::Eq,
     "!=" => EqOp::NotEq,
-};
+}
 
 /// EqExp ::= RelExp | EqExp ("==" | "!=") RelExp;
 EqExp: EqExpr = {
@@ -167,13 +194,13 @@ EqExp: EqExpr = {
 LAndExp: LAndExpr = {
     <EqExp> => LAndExpr::new_eq(<>),
     <LAndExp> "&&" <EqExp> => LAndExpr::new_binary(<>),
-};
+}
 
 /// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
 LOrExp: LOrExpr = {
     <LAndExp> => LOrExpr::new_and(<>),
     <LOrExp> "||" <LAndExp> => LOrExpr::new_binary(<>),
-};
+}
 
 /// ConstExp ::= Exp;
 ConstExp: ConstExpr = <Exp> => ConstExpr::new(<>);

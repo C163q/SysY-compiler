@@ -56,8 +56,8 @@ impl Display for FuncDef {
 ///
 /// ```c, ignore
 /// {   // block
-///     int a = 0;  // Decl
-///     return a;   // Stmt
+///     int a = 0;  // BlockItem: Decl
+///     return a;   // BlockItem: Stmt
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -112,15 +112,21 @@ impl Display for BlockItem {
 /// ```c, ignore
 /// return 0;   // Stmt
 /// ```
+///
 /// Return(expr) <-  return 0;
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Return(Expr),
+    Assign(LVal, Expr),
 }
 
 impl Stmt {
     pub fn new_return(val: Expr) -> Self {
         Self::Return(val)
+    }
+
+    pub fn new_assign(lval: LVal, expr: Expr) -> Self {
+        Self::Assign(lval, expr)
     }
 }
 
@@ -128,6 +134,7 @@ impl Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Stmt::Return(val) => write!(f, "return {}", val),
+            Stmt::Assign(lval, expr) => write!(f, "{} = {}", lval, expr),
         }
     }
 }
@@ -136,11 +143,16 @@ impl Display for Stmt {
 #[derive(Debug, Clone)]
 pub enum Decl {
     Const(ConstDecl),
+    Var(VarDecl),
 }
 
 impl Decl {
     pub fn new_const(const_decl: ConstDecl) -> Self {
         Self::Const(const_decl)
+    }
+
+    pub fn new_var(var_decl: VarDecl) -> Self {
+        Self::Var(var_decl)
     }
 }
 
@@ -148,11 +160,19 @@ impl Display for Decl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Decl::Const(const_decl) => write!(f, "{}", const_decl),
+            Decl::Var(var_decl) => write!(f, "{}", var_decl),
         }
     }
 }
 
 /// 常量声明
+///
+/// ```c
+/// //    ty  def
+/// //     ↓   ↓
+/// //    --- --------
+/// const int x, y = 0;
+/// ```
 #[derive(Debug, Clone)]
 pub struct ConstDecl {
     pub ty: BType,
@@ -181,7 +201,7 @@ impl Display for ConstDecl {
 /// 类型
 #[derive(Debug, Clone, Copy)]
 pub enum BType {
-    Int,
+    Int,    // int
 }
 
 impl BType {
@@ -207,6 +227,13 @@ impl From<BType> for Type {
 }
 
 /// 常量定义
+///
+/// ```c
+/// //    indent init_val
+/// //        ↓   ↓
+/// //        -   -
+/// const int x = 0, y = 1;
+/// ```
 #[derive(Debug, Clone)]
 pub struct ConstDef {
     pub ident: String,
@@ -226,6 +253,13 @@ impl Display for ConstDef {
 }
 
 /// 常量初值
+///
+/// ```c
+/// //              expr
+/// //                ↓
+/// //            ---------
+/// const int a = 1 + 2 * 3;
+/// ```
 #[derive(Debug, Clone)]
 pub struct ConstInitVal {
     pub expr: ConstExpr,
@@ -238,6 +272,73 @@ impl ConstInitVal {
 }
 
 impl Display for ConstInitVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.expr)
+    }
+}
+
+/// 变量声明
+#[derive(Debug, Clone)]
+pub struct VarDecl {
+    pub ty: BType,
+    pub def: Vec<VarDef>,
+}
+
+impl VarDecl {
+    pub fn new(ty: BType, def: Vec<VarDef>) -> Self {
+        Self { ty, def }
+    }
+}
+
+impl Display for VarDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ", self.ty)?;
+        for (i, def) in self.def.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", def)?;
+        }
+        write!(f, ";")?;
+        Ok(())
+    }
+}
+
+/// 变量定义
+#[derive(Debug, Clone)]
+pub struct VarDef {
+    pub ident: String,
+    pub init_val: Option<InitVal>,
+}
+
+impl VarDef {
+    pub fn new(ident: String, init_val: Option<InitVal>) -> Self {
+        Self { ident, init_val }
+    }
+}
+
+impl Display for VarDef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.init_val {
+            Some(init_val) => write!(f, "{} = {}", self.ident, init_val),
+            None => write!(f, "{}", self.ident),
+        }
+    }
+}
+
+/// 初值
+#[derive(Debug, Clone)]
+pub struct InitVal {
+    pub expr: Expr,
+}
+
+impl InitVal {
+    pub fn new(expr: Expr) -> Self {
+        Self { expr }
+    }
+}
+
+impl Display for InitVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.expr)
     }
@@ -282,6 +383,13 @@ impl Display for Expr {
 }
 
 /// 或
+///
+/// ```c
+/// //    LOrExpr
+/// //       ↓
+/// //     ------
+/// return 1 || 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum LOrExpr {
     And(LAndExpr),
@@ -308,6 +416,13 @@ impl Display for LOrExpr {
 }
 
 /// 与
+///
+/// ```c
+/// //    LAndExpr
+/// //       ↓
+/// //     ------
+/// return 1 && 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum LAndExpr {
     Eq(EqExpr),
@@ -350,6 +465,14 @@ impl Display for EqOp {
 }
 
 /// 等于比较表达式
+///
+/// ```c
+/// //     EqExpr
+/// //       ↓
+/// //     ------
+/// return 1 == 2;
+/// return 1 != 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum EqExpr {
     Rel(RelExpr),
@@ -396,6 +519,16 @@ impl Display for RelOp {
 }
 
 /// 比较表达式
+///
+/// ```c
+/// //    RelExpr
+/// //       ↓
+/// //     ------
+/// return 1 >  2;
+/// return 1 <  2;
+/// return 1 >= 2;
+/// return 1 <= 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum RelExpr {
     Add(AddExpr),
@@ -438,6 +571,14 @@ impl Display for AddOp {
 }
 
 /// 加减法表达式
+///
+/// ```c
+/// //    AddExpr
+/// //       ↓
+/// //     -----
+/// return 1 + 2;
+/// return 1 - 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum AddExpr {
     Mul(MulExpr),
@@ -482,6 +623,15 @@ impl Display for MulOp {
 }
 
 /// 乘除法表达式
+///
+/// ```c
+/// //    MulExpr
+/// //       ↓
+/// //     -----
+/// return 1 * 2;
+/// return 1 / 2;
+/// return 1 % 2;
+/// ```
 #[derive(Debug, Clone)]
 pub enum MulExpr {
     Unary(UnaryExpr),
@@ -526,6 +676,15 @@ impl Display for UnaryOp {
 }
 
 /// 一元表达式
+///
+/// ```c
+/// //  UnaryExpr
+/// //      ↓
+/// //     ---
+/// return + 1;
+/// return - 1;
+/// return ! 1;
+/// ```
 #[derive(Debug, Clone)]
 pub enum UnaryExpr {
     Primary(PrimaryExpr),
@@ -602,7 +761,6 @@ impl Display for LVal {
 }
 
 /// 数字
-/// TODO: 变量
 #[derive(Debug, Clone)]
 pub struct Number {
     pub val: i32,

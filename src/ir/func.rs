@@ -1,11 +1,11 @@
 use koopa::ir::{
-    BasicBlock, Function, FunctionData, Program, Value,
+    BasicBlock, Function, FunctionData, Program, Type, Value,
     builder::{BasicBlockBuilder, LocalInstBuilder},
     dfg::DataFlowGraph,
 };
 
 use crate::{
-    ir::meta::{ConstValue, Instruction, IntoIr, VariableManager},
+    ir::meta::{ConstValue, Instruction, IntoIr, Variable, VariableManager},
     parse::ast::{self, BType},
 };
 
@@ -66,7 +66,38 @@ impl IntoIr for ast::Decl {
     fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
         match self {
             ast::Decl::Const(decl) => decl.into_ir(dfg, manager),
+            ast::Decl::Var(decl) => decl.into_ir(dfg, manager),
         }
+    }
+}
+
+impl IntoIr for ast::VarDecl {
+    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
+        let ty = self.ty;
+        let defs = self.def;
+        let mut vec = vec![];
+        for def in defs {
+            let ident = def.ident;
+            let init_val = def.init_val;
+            let ty: Type = ty.into();
+            let value = dfg.new_value().alloc(ty.clone());
+            vec.push(Instruction::new(value, true));
+            manager
+                .define_var(ident, value, ty)
+                .unwrap_or_else(|e| panic!("Error defining variable: {}", e));
+            if let Some(init_val) = init_val {
+                let insts = init_val.expr.into_ir(dfg, manager);
+                let src = *insts
+                    .last()
+                    .copied()
+                    .expect("Initialization expression should produce at least one value")
+                    .inst();
+                vec.extend(insts);
+                let store = dfg.new_value().store(src, value);
+                vec.push(Instruction::new(store, true));
+            }
+        }
+        vec
     }
 }
 
@@ -81,9 +112,7 @@ impl IntoIr for ast::ConstDecl {
                     Some(value) => {
                         manager
                             .define_const(ident, ConstValue::Int(value))
-                            .unwrap_or_else(|e| {
-                                panic!("Error defining constant: {}", e)
-                            });
+                            .unwrap_or_else(|e| panic!("Error defining constant: {}", e));
                     }
                     None => {
                         panic!(
@@ -102,6 +131,7 @@ impl IntoIr for ast::ConstDecl {
 impl IntoIr for ast::Stmt {
     fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
         match self {
+            // return val;
             ast::Stmt::Return(expr) => {
                 let mut vec = vec![];
                 let expr_values = expr.into_ir(dfg, manager);
@@ -111,7 +141,32 @@ impl IntoIr for ast::Stmt {
                 vec.push(Instruction::new(ret, true));
                 vec
             }
-            // TODO: support more statements.
+            // lval = expr;
+            ast::Stmt::Assign(lval, expr) => {
+                let mut vec = vec![];
+                let var = manager
+                    .get(&lval.ident)
+                    .unwrap_or_else(|| panic!("Undefined variable: {}", lval.ident));
+                match var {
+                    Variable::Const(_) => {
+                        panic!("Cannot assign to constant variable: {}", lval.ident)
+                    }
+                    Variable::Var(var) => {
+                        let var = var.clone();
+                        let insts = expr.into_ir(dfg, manager);
+                        let src = *insts
+                            .last()
+                            .copied()
+                            .expect("Assignment expression should produce at least one value")
+                            .inst();
+                        vec.extend(insts);
+                        let dest = *var.value();
+                        let store = dfg.new_value().store(src, dest);
+                        vec.push(Instruction::new(store, true));
+                    }
+                }
+                vec
+            }
         }
     }
 }
