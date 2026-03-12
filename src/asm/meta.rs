@@ -2,9 +2,12 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::{self, Debug, Display},
     mem,
+    ops::{Deref, DerefMut},
 };
 
 use koopa::ir::{FunctionData, Value};
+
+use crate::asm::inst;
 
 pub const INDENT: &str = "  ";
 
@@ -28,7 +31,10 @@ pub const REGISTER_ID_NAMES: [&str; REGISTER_COUNT] = [
 pub const INST_LOAD_IMMEDIATE: &str = "li";
 pub const INST_RETURN: &str = "ret";
 pub const INST_MOVE: &str = "mv";
+pub const INST_LOAD_WORD: &str = "lw";
+pub const INST_STORE_WORD: &str = "sw";
 pub const INST_ADDITION: &str = "add";
+pub const INST_ADDITION_IMMEDIATE: &str = "addi";
 pub const INST_SUBTRACTION: &str = "sub";
 pub const INST_MULTIPLICATION: &str = "mul";
 pub const INST_DIVISION: &str = "div";
@@ -40,6 +46,85 @@ pub const INST_SET_IF_EQUAL_TO_ZERO: &str = "seqz";
 pub const INST_SET_IF_NOT_EQUAL_TO_ZERO: &str = "snez";
 pub const INST_SET_IF_LESS_THAN: &str = "slt";
 pub const INST_SET_IF_GREATER_THAN: &str = "sgt";
+
+pub type RV32Usize = u32;
+pub type RV32Isize = i32;
+
+pub const STACK_ALIGNMENT: RV32Usize = 16;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RV32Imm(i32);
+
+impl RV32Imm {
+    pub fn new(value: i32) -> Self {
+        RV32Imm(value)
+    }
+
+    pub fn value(&self) -> i32 {
+        self.0
+    }
+
+    pub fn set_value(&mut self, value: i32) {
+        self.0 = value;
+    }
+}
+
+impl Display for RV32Imm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Deref for RV32Imm {
+    type Target = i32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for RV32Imm {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RV32Imm12(i16);
+
+impl RV32Imm12 {
+    pub fn new(value: i16) -> Self {
+        if !(-2048..=2047).contains(&value) {
+            panic!("Immediate value out of range for RV32I: {}", value);
+        }
+        RV32Imm12(value)
+    }
+
+    pub fn value(&self) -> i16 {
+        self.0
+    }
+
+    pub fn set_value(&mut self, value: i16) {
+        if !(-2048..=2047).contains(&value) {
+            panic!("Immediate value out of range for RV32I: {}", value);
+        }
+        self.0 = value;
+    }
+}
+
+impl Display for RV32Imm12 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Deref for RV32Imm12 {
+    type Target = i16;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -97,7 +182,7 @@ impl From<u8> for Register {
             panic!("Invaild register")
         }
         // SAFETY:
-        // We ensure that value is in the range of 0-31
+        // We ensure that the value is in the range of 0-31
         unsafe { mem::transmute(value) }
     }
 }
@@ -243,6 +328,11 @@ impl RegisterMapper {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.usage.clear();
+    }
+
     pub fn get_by_value(&self, value: &Value) -> Option<&HashSet<Register>> {
         self.map.get(value).filter(|set| !set.is_empty())
     }
@@ -256,11 +346,201 @@ impl RegisterMapper {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StackSizeAllocator {
+    size: RV32Usize,
+    aligned_size: RV32Usize,
+}
+
+impl Default for StackSizeAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StackSizeAllocator {
+    pub fn new() -> Self {
+        StackSizeAllocator {
+            size: 0,
+            aligned_size: 0,
+        }
+    }
+
+    pub fn allocate(&mut self, size: RV32Usize) -> RV32Usize {
+        let old_size = self.stack_size();
+        self.size += size;
+        self.aligned_size = if self.size.is_multiple_of(STACK_ALIGNMENT) {
+            self.size
+        } else {
+            self.size + (STACK_ALIGNMENT - self.size % STACK_ALIGNMENT)
+        };
+        self.stack_size() - old_size
+    }
+
+    pub fn stack_size(&self) -> RV32Usize {
+        self.aligned_size
+    }
+
+    pub fn size(&self) -> RV32Usize {
+        self.size
+    }
+
+    pub fn is_aligned(&self) -> bool {
+        self.size() == self.stack_size()
+    }
+}
+
+/// Stack:
+///
+/// ```text, ignore
+/// +---------------------+ High address
+/// |    Last function    |
+/// +---------------------+
+/// |   Saved registers   |
+/// +---------------------+
+/// |   Local variables   |
+/// +---------------------+
+/// | Function arguments  |
+/// +---------------------+             ^    padding
+/// |                     |             |       ^
+/// |                     |             |       |
+/// |        STACK        |        aligned_size |
+/// |                     |             |      size
+/// |                     |             |       |
+/// +---------------------+ <- sp       v       v
+/// |                     | Low address
+/// ```
+///
+/// 我们暂时将map中的值视为相对于sp的偏移量。
+#[derive(Debug, Clone)]
+pub struct MemoryMapper {
+    // To count the stack size, but not actually allocate it until the prologue.
+    stack_size: StackSizeAllocator,
+    // Map from Value to its offset in the stack. See the comment above for details.
+    map: HashMap<Value, RV32Usize>,
+    // Size of the stack that has been claimed by values. This is used to determine the offset of a
+    // memory when claiming.
+    claimed: RV32Usize,
+    // Actual size of the stack that has been allocated. This should be done by modifying the stack
+    // pointer in the prologue.
+    allocated: RV32Usize,
+}
+
+impl Default for MemoryMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemoryMapper {
+    pub fn new() -> Self {
+        MemoryMapper {
+            stack_size: StackSizeAllocator::new(),
+            map: HashMap::new(),
+            claimed: 0,
+            allocated: 0,
+        }
+    }
+
+    pub fn allocate(&mut self, size: RV32Usize) {
+        let grow = self.stack_size.allocate(size);
+        if grow > 0 {
+            for entry in self.map.iter_mut() {
+                *entry.1 += grow;
+            }
+        }
+    }
+
+    pub fn claim(&mut self, value: Value, size: RV32Usize) {
+        if !self.map.contains_key(&value) {
+            self.map.insert(value, self.claimed);
+            self.claimed += size;
+        } else {
+            panic!("Value already claimed in memory mapper: {:?}", value);
+        }
+    }
+
+    pub fn alloc_size(&self) -> RV32Usize {
+        self.stack_size.stack_size()
+    }
+
+    pub fn size(&self) -> RV32Usize {
+        self.stack_size.size()
+    }
+
+    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<RV32Usize> {
+        self.map.get(value).copied().inspect(|&offset| {
+            if offset + size > self.size() {
+                panic!(
+                    "Offset {} and the size for value {:?} exceeds claimed stack size {}",
+                    offset,
+                    value,
+                    self.size()
+                );
+            }
+        })
+    }
+
+    pub fn extend_stack(&mut self) -> Vec<RiscvAsm> {
+        let mut asms = vec![];
+        if self.alloc_size() > self.allocated {
+            let size = self.alloc_size() - self.allocated;
+            if size > i32::MAX as RV32Usize {
+                panic!("Stack size exceeds i32::MAX: {}", size);
+            }
+            let size = size as i32;
+            if size > 2048 {
+                asms.push(inst::li_instruction(Register::T1, -size, None));
+                asms.push(inst::add_instruction(
+                    Register::Sp,
+                    Register::Sp,
+                    Register::T1,
+                    None,
+                ));
+            } else {
+                asms.push(inst::addi_instruction(
+                    Register::Sp,
+                    Register::Sp,
+                    -(size as i16),
+                    None,
+                ));
+            }
+            self.allocated += size as RV32Usize;
+        }
+        asms
+    }
+
+    pub fn resume_stack(&mut self) -> Vec<RiscvAsm> {
+        let mut asms = vec![];
+        if self.allocated > 0 {
+            let size = self.allocated as i32;
+            if size > 2047 {
+                asms.push(inst::li_instruction(Register::T1, size, None));
+                asms.push(inst::add_instruction(
+                    Register::Sp,
+                    Register::Sp,
+                    Register::T1,
+                    None,
+                ));
+            } else {
+                asms.push(inst::addi_instruction(
+                    Register::Sp,
+                    Register::Sp,
+                    size as i16,
+                    None,
+                ));
+            }
+            self.allocated = 0;
+        }
+        asms
+    }
+}
+
 pub struct FunctionContext<'a> {
     pub func_data: &'a FunctionData,
     pub register_mapper: RegisterMapper,
     /// i32为偏移量
-    pub memory_map: HashMap<Value, i32>,
+    pub memory_mapper: MemoryMapper,
 }
 
 impl Debug for FunctionContext<'_> {
@@ -268,7 +548,7 @@ impl Debug for FunctionContext<'_> {
         f.debug_struct("FunctionContext")
             .field("func_data", &"&FunctionData")
             .field("register_map", &self.register_mapper)
-            .field("memory_map", &self.memory_map)
+            .field("memory_map", &self.memory_mapper)
             .finish()
     }
 }
@@ -278,7 +558,7 @@ impl FunctionContext<'_> {
         FunctionContext {
             func_data,
             register_mapper: RegisterMapper::new(),
-            memory_map: HashMap::new(),
+            memory_mapper: MemoryMapper::new(),
         }
     }
 }
@@ -288,11 +568,8 @@ impl FunctionContext<'_> {
 /// 对于某些IR数据，可能需要首先注册才行，否则无法直接使用它们的名字（例如函数）。
 pub trait ToAsm {
     /// 产生汇编代码，不负责注册。
-    fn to_asm(
-        &self,
-        func_data: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm>;
+    fn to_asm(&self, context: Option<&mut FunctionContext<'_>>, id: Option<Value>)
+    -> Vec<RiscvAsm>;
 
     /// 注册，对于某些全局数据，这是必须的步骤。
     fn register(&self) -> Option<RiscvAsm> {
@@ -305,16 +582,31 @@ pub enum RiscvInstruction {
     Ret,
     Li {
         dest: Register,
-        imm: i32,
+        imm: RV32Imm,
     },
     Mv {
         dest: Register,
         src: Register,
     },
+    Lw {
+        dest: Register,
+        base: Register,
+        offset: RV32Imm12,
+    },
+    Sw {
+        src: Register,
+        base: Register,
+        offset: RV32Imm12,
+    },
     Add {
         dest: Register,
         src1: Register,
         src2: Register,
+    },
+    Addi {
+        dest: Register,
+        src1: Register,
+        src2: RV32Imm12,
     },
     Sub {
         dest: Register,
@@ -402,8 +694,41 @@ impl Display for RiscvInstruction {
             RiscvInstruction::Mv { dest, src } => {
                 write!(f, "{}{} {}, {}", INDENT, INST_MOVE, dest.name(), src.name())
             }
+            RiscvInstruction::Lw { dest, base, offset } => {
+                write!(
+                    f,
+                    "{}{} {}, {}({})",
+                    INDENT,
+                    INST_LOAD_WORD,
+                    dest.name(),
+                    offset,
+                    base.name()
+                )
+            }
+            RiscvInstruction::Sw { src, base, offset } => {
+                write!(
+                    f,
+                    "{}{} {}, {}({})",
+                    INDENT,
+                    INST_STORE_WORD,
+                    src.name(),
+                    offset,
+                    base.name()
+                )
+            }
             RiscvInstruction::Add { dest, src1, src2 } => {
                 binary_inst_format!(INST_ADDITION, dest, src1, src2, f)
+            }
+            RiscvInstruction::Addi { dest, src1, src2 } => {
+                write!(
+                    f,
+                    "{}{} {}, {}, {}",
+                    INDENT,
+                    INST_ADDITION_IMMEDIATE,
+                    dest.name(),
+                    src1.name(),
+                    src2
+                )
             }
             RiscvInstruction::Sub { dest, src1, src2 } => {
                 binary_inst_format!(INST_SUBTRACTION, dest, src1, src2, f)

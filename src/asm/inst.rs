@@ -1,13 +1,27 @@
 use koopa::ir::Value;
 
-use crate::asm::meta::{FunctionContext, Register, RegisterValue, RiscvAsm, RiscvInstruction};
+use crate::asm::meta::{
+    FunctionContext, RV32Imm, RV32Imm12, Register, RegisterValue, RiscvAsm, RiscvInstruction,
+};
 
-fn register_dest(dest: Register, context: &mut FunctionContext, id: Option<Value>) {
-    if let Some(id) = id {
-        context.register_mapper.remove_by_register(dest);
-        context
+#[derive(Debug)]
+pub struct InstContext<'a, 'b: 'a> {
+    pub context: &'a mut FunctionContext<'b>,
+    pub id: Value,
+}
+
+impl InstContext<'_, '_> {
+    pub fn new<'a, 'b>(context: &'a mut FunctionContext<'b>, id: Value) -> InstContext<'a, 'b> {
+        InstContext { context, id }
+    }
+}
+
+fn register_dest(dest: Register, context: Option<InstContext>) {
+    if let Some(ctx) = context {
+        ctx.context.register_mapper.remove_by_register(dest);
+        ctx.context
             .register_mapper
-            .insert(RegisterValue::InstRet(id), dest);
+            .insert(RegisterValue::InstRet(ctx.id), dest);
     }
 }
 
@@ -19,30 +33,23 @@ pub fn ret_instruction() -> RiscvAsm {
     RiscvAsm::Instruction(RiscvInstruction::Ret)
 }
 
-pub fn li_instruction(
-    dest: Register,
-    imm: i32,
-    context: &mut FunctionContext,
-    id: Option<Value>,
-) -> RiscvAsm {
-    register_dest(dest, context, id);
-    RiscvAsm::Instruction(RiscvInstruction::Li { dest, imm })
+pub fn li_instruction(dest: Register, imm: i32, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::Li {
+        dest,
+        imm: RV32Imm::new(imm),
+    })
 }
 
-pub fn mv_instruction(
-    dest: Register,
-    src: Register,
-    context: &mut FunctionContext,
-    id: Option<Value>,
-) -> RiscvAsm {
-    register_dest(dest, context, id);
+pub fn mv_instruction(dest: Register, src: Register, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
     RiscvAsm::Instruction(RiscvInstruction::Mv { dest, src })
 }
 
 macro_rules! binary_instruction {
-    ($dest:expr, $src1:expr, $src2:expr, $context:expr, $id:expr, $variant:tt) => {
+    ($dest:expr, $src1:expr, $src2:expr, $context:expr, $variant:tt) => {
         use crate::asm::meta::{RiscvAsm, RiscvInstruction};
-        register_dest($dest, $context, $id);
+        register_dest($dest, $context);
         return RiscvAsm::Instruction(RiscvInstruction::$variant {
             dest: $dest,
             src1: $src1,
@@ -57,10 +64,9 @@ macro_rules! define_binary_instruction {
             dest: Register,
             src1: Register,
             src2: Register,
-            context: &mut FunctionContext,
-            id: Option<Value>,
+            context: Option<InstContext>,
         ) -> RiscvAsm {
-            binary_instruction!(dest, src1, src2, context, id, $variant);
+            binary_instruction!(dest, src1, src2, context, $variant);
         }
     };
 }
@@ -76,22 +82,124 @@ define_binary_instruction!(xor_instruction, Xor);
 define_binary_instruction!(slt_instruction, Slt);
 define_binary_instruction!(sgt_instruction, Sgt);
 
-pub fn seqz_instruction(
-    dest: Register,
-    src: Register,
-    context: &mut FunctionContext,
-    id: Option<Value>,
-) -> RiscvAsm {
-    register_dest(dest, context, id);
+pub fn seqz_instruction(dest: Register, src: Register, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
     RiscvAsm::Instruction(RiscvInstruction::Seqz { dest, src })
 }
 
-pub fn snez_instruction(
+pub fn snez_instruction(dest: Register, src: Register, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::Snez { dest, src })
+}
+
+pub fn addi_instruction(
     dest: Register,
     src: Register,
-    context: &mut FunctionContext,
-    id: Option<Value>,
+    imm: i16,
+    context: Option<InstContext>,
 ) -> RiscvAsm {
-    register_dest(dest, context, id);
-    RiscvAsm::Instruction(RiscvInstruction::Snez { dest, src })
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::Addi {
+        dest,
+        src1: src,
+        src2: RV32Imm12::new(imm),
+    })
+}
+
+pub fn lw_instruction(
+    dest: Register,
+    base: Register,
+    offset: i16,
+    context: Option<InstContext>,
+) -> RiscvAsm {
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::Lw {
+        dest,
+        base,
+        offset: RV32Imm12::new(offset),
+    })
+}
+
+pub fn sw_instruction(
+    src: Register,
+    base: Register,
+    offset: i16,
+    _context: Option<InstContext>,
+) -> RiscvAsm {
+    // we don't need to register_dest for sw, since it doesn't write to a register
+    RiscvAsm::Instruction(RiscvInstruction::Sw {
+        src,
+        base,
+        offset: RV32Imm12::new(offset),
+    })
+}
+
+macro_rules! reusable_register_dest {
+    ($ctx:expr, $dest:expr) => {
+        if let Some(ctx) = $ctx {
+            let new_ctx = Some(InstContext {
+                context: ctx.context,
+                id: ctx.id,
+            });
+            register_dest($dest, new_ctx);
+            Some(ctx)
+        } else {
+            $ctx
+        }
+    };
+}
+
+pub fn add_lw_instruction(
+    dest: Register,
+    src: Register,
+    offset: RV32Imm,
+    context: Option<InstContext>,
+    rd: Option<Register>,
+) -> Vec<RiscvAsm> {
+    let context = reusable_register_dest!(context, dest);
+    let mut asms = vec![];
+    if !(-2048..=2047).contains(&offset.value()) {
+        match rd {
+            Some(rd) => {
+                asms.push(li_instruction(rd, offset.value(), None));
+                asms.push(add_instruction(rd, src, rd, None));
+                asms.push(lw_instruction(dest, rd, 0, context));
+            }
+            None => {
+                panic!(
+                    "Offset {} is out of range for add_lw_instruction, and no temporary register provided",
+                    offset.value()
+                );
+            }
+        }
+        return asms;
+    }
+    vec![lw_instruction(dest, src, offset.value() as i16, context)]
+}
+
+pub fn add_sw_instruction(
+    src: Register,
+    base: Register,
+    offset: RV32Imm,
+    context: Option<InstContext>,
+    rd: Option<Register>,
+) -> Vec<RiscvAsm> {
+    let mut asms = vec![];
+    if !(-2048..=2047).contains(&offset.value()) {
+        match rd {
+            Some(rd) => {
+                asms.push(li_instruction(rd, offset.value(), None));
+                asms.push(add_instruction(rd, base, rd, None));
+                asms.push(sw_instruction(src, rd, 0, None));
+            }
+            None => {
+                panic!(
+                    "Offset {} is out of range for add_sw_instruction, and no temporary register provided",
+                    offset.value()
+                );
+            }
+        }
+        return asms;
+    }
+    vec![sw_instruction(src, base, offset.value() as i16, context)]
 }

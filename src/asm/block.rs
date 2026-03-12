@@ -21,6 +21,15 @@ impl ToAsm for ValueData {
             ValueKind::Binary(bin) => {
                 asms.extend(bin.to_asm(Some(context), Some(id)));
             }
+            ValueKind::Alloc(alloc) => {
+                asms.extend(alloc.to_asm(Some(context), Some(id)));
+            }
+            ValueKind::Load(load) => {
+                asms.extend(load.to_asm(Some(context), Some(id)));
+            }
+            ValueKind::Store(store) => {
+                asms.extend(store.to_asm(Some(context), Some(id)));
+            }
             _ => unimplemented!(),
         }
         asms
