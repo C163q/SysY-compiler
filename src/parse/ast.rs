@@ -119,7 +119,10 @@ pub enum Stmt {
     Return(Expr),
     Assign(LVal, Expr),
     Expr(Option<Expr>),
+    If(Box<IfBranch>),
+    Else(Box<ElseBranch>),
     Block(Block),
+    IfElse(Box<IfBranch>, Box<ElseBranch>),
 }
 
 impl Stmt {
@@ -138,6 +141,14 @@ impl Stmt {
     pub fn new_block(block: Block) -> Self {
         Self::Block(block)
     }
+
+    pub fn new_if(if_branch: IfBranch) -> Self {
+        Self::If(Box::new(if_branch))
+    }
+
+    pub fn new_else(else_branch: ElseBranch) -> Self {
+        Self::Else(Box::new(else_branch))
+    }
 }
 
 impl Display for Stmt {
@@ -150,7 +161,49 @@ impl Display for Stmt {
                 None => write!(f, ";"),
             },
             Stmt::Block(block) => write!(f, "{}", block),
+            Stmt::If(if_branch) => write!(f, "{}", if_branch),
+            Stmt::Else(else_branch) => write!(f, "{}", else_branch),
+            Stmt::IfElse(if_branch, else_branch) => {
+                write!(f, "{}", if_branch)?;
+                write!(f, " {}", else_branch)?;
+                Ok(())
+            }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IfBranch {
+    pub cond: Expr,
+    pub stmt: Stmt,
+}
+
+impl IfBranch {
+    pub fn new(cond: Expr, stmt: Stmt) -> Self {
+        Self { cond, stmt }
+    }
+}
+
+impl Display for IfBranch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "if ({}) {}", self.cond, self.stmt)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ElseBranch {
+    pub stmt: Stmt,
+}
+
+impl ElseBranch {
+    pub fn new(stmt: Stmt) -> Self {
+        Self { stmt }
+    }
+}
+
+impl Display for ElseBranch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "else {}", self.stmt)
     }
 }
 

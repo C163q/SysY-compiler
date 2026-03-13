@@ -13,6 +13,8 @@ use crate::parse::ast::{
     BlockItem,
     LVal,
     Stmt,
+    IfBranch,
+    ElseBranch,
     Expr,
     UnaryOp,
     UnaryExpr,
@@ -109,6 +111,8 @@ Stmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::new_assign(<>),
     <e:Exp?> ";" => Stmt::new_expr(e),
     <Block> => Stmt::new_block(<>),
+    "if" "(" <Exp> ")" <Stmt> => Stmt::new_if(IfBranch::new(<>)),
+    "else" <Stmt> => Stmt::new_else(ElseBranch::new(<>)),
     "return" <Exp> ";" => Stmt::new_return(<>),
 }
 

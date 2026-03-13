@@ -2,12 +2,27 @@ use std::collections::HashMap;
 
 use koopa::ir::{Type, Value, dfg::DataFlowGraph};
 
+use crate::ir::func::BlockFlow;
+
+pub fn last_flow(flows: &mut [BlockFlow]) -> &mut BlockFlow {
+    flows.last_mut().expect("FATAL: Basic block is needed.")
+}
+
+pub fn last_inst_vec(flows: &mut [BlockFlow]) -> &mut Vec<Instruction> {
+    &mut last_flow(flows).insts
+}
+
 /// 转换为IR。
 pub trait IntoIr {
     /// 转换为IR。
     ///
     /// dfg用于产生新的Value，此处Value可以代指指令的结果，也可以代指常量或变量的值。
-    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction>;
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    );
 
     /// 任何允许编译期求出i32值的表达式都应当返回[`Some`]。
     fn const_eval_i32(&self, _manager: &VariableManager) -> Option<i32> {
