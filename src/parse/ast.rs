@@ -118,6 +118,8 @@ impl Display for BlockItem {
 pub enum Stmt {
     Return(Expr),
     Assign(LVal, Expr),
+    Expr(Option<Expr>),
+    Block(Block),
 }
 
 impl Stmt {
@@ -128,13 +130,26 @@ impl Stmt {
     pub fn new_assign(lval: LVal, expr: Expr) -> Self {
         Self::Assign(lval, expr)
     }
+
+    pub fn new_expr(expr: Option<Expr>) -> Self {
+        Self::Expr(expr)
+    }
+
+    pub fn new_block(block: Block) -> Self {
+        Self::Block(block)
+    }
 }
 
 impl Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::Return(val) => write!(f, "return {}", val),
-            Stmt::Assign(lval, expr) => write!(f, "{} = {}", lval, expr),
+            Stmt::Return(val) => write!(f, "return {};", val),
+            Stmt::Assign(lval, expr) => write!(f, "{} = {};", lval, expr),
+            Stmt::Expr(expr) => match expr {
+                Some(e) => write!(f, "{};", e),
+                None => write!(f, ";"),
+            },
+            Stmt::Block(block) => write!(f, "{}", block),
         }
     }
 }
@@ -201,7 +216,7 @@ impl Display for ConstDecl {
 /// 类型
 #[derive(Debug, Clone, Copy)]
 pub enum BType {
-    Int,    // int
+    Int, // int
 }
 
 impl BType {

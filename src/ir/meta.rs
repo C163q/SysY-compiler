@@ -70,18 +70,19 @@ pub enum Variable {
     Var(VarValue),
 }
 
-/// 管理变量名与其值的映射关系。
-pub struct VariableManager {
+/// Manager for variables with scope.
+#[derive(Debug, Clone)]
+pub struct ScopedVariableManager {
     map: HashMap<String, Variable>,
 }
 
-impl Default for VariableManager {
+impl Default for ScopedVariableManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VariableManager {
+impl ScopedVariableManager {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -110,5 +111,77 @@ impl VariableManager {
                 Ok(())
             }
         }
+    }
+}
+
+/// 管理变量名与其值的映射关系。
+#[derive(Debug, Clone)]
+pub struct VariableManager {
+    scopes: Vec<ScopedVariableManager>,
+}
+
+impl Default for VariableManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VariableManager {
+    pub fn new() -> Self {
+        Self { scopes: vec![] }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Variable> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(var) = scope.get(name) {
+                return Some(var);
+            }
+        }
+        None
+    }
+
+    pub fn define_const(&mut self, name: String, value: ConstValue) -> Result<(), String> {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.define_const(name, value)
+        } else {
+            Err("No scope available to define constant".to_string())
+        }
+    }
+
+    pub fn define_var(&mut self, name: String, value: Value, ty: Type) -> Result<(), String> {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.define_var(name, value, ty)
+        } else {
+            Err("No scope available to define variable".to_string())
+        }
+    }
+
+    pub fn new_scope(&mut self) {
+        self.scopes.push(ScopedVariableManager::new());
+    }
+
+    pub fn exit_scope(&mut self) {
+        self.scopes.pop();
+    }
+}
+
+pub struct ScopeGuard<'a> {
+    manager: &'a mut VariableManager,
+}
+
+impl<'a> ScopeGuard<'a> {
+    pub fn new(manager: &'a mut VariableManager) -> Self {
+        manager.new_scope();
+        Self { manager }
+    }
+
+    pub fn inner(&mut self) -> &mut VariableManager {
+        self.manager
+    }
+}
+
+impl Drop for ScopeGuard<'_> {
+    fn drop(&mut self) {
+        self.manager.exit_scope();
     }
 }

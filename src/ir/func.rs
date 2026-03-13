@@ -5,7 +5,7 @@ use koopa::ir::{
 };
 
 use crate::{
-    ir::meta::{ConstValue, Instruction, IntoIr, Variable, VariableManager},
+    ir::meta::{ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager},
     parse::ast::{self, BType},
 };
 
@@ -44,12 +44,6 @@ impl ast::FuncDef {
     /// NOTE: function MUST be registered first.
     pub fn load_data(self, data: &mut FunctionData) {
         ast_to_func(self, data);
-    }
-}
-
-impl ast::Block {
-    pub fn into_func_ir(self, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
-        build_blocks(self, dfg)
     }
 }
 
@@ -167,11 +161,32 @@ impl IntoIr for ast::Stmt {
                 }
                 vec
             }
+            // [expr];
+            ast::Stmt::Expr(maybe_expr) => {
+                let mut vec = vec![];
+                if let Some(expr) = maybe_expr {
+                    vec.extend(expr.into_ir(dfg, manager));
+                }
+                vec
+            }
+            // { BlockItems,* }
+            ast::Stmt::Block(block) => block.into_ir(dfg, manager),
         }
     }
 }
 
-fn build_blocks(block: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
+impl IntoIr for ast::Block {
+    fn into_ir(self, dfg: &mut DataFlowGraph, manager: &mut VariableManager) -> Vec<Instruction> {
+        let mut guard = ScopeGuard::new(manager);
+        let mut vec = vec![];
+        for item in self.items {
+            vec.extend(item.into_ir(dfg, guard.inner()));
+        }
+        vec
+    }
+}
+
+fn func_scope(scope: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
     // Currently, we only support a single basic block for each function, so we can directly build
     // the entry block and VariableManager.
     let mut entry = {
@@ -180,9 +195,10 @@ fn build_blocks(block: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
     };
 
     let mut manager = VariableManager::new();
+    let mut guard = ScopeGuard::new(&mut manager);
 
-    block.items.into_iter().for_each(|item| {
-        let values = item.into_ir(dfg, &mut manager);
+    scope.items.into_iter().for_each(|item| {
+        let values = item.into_ir(dfg, guard.inner());
         entry.values.extend(
             values
                 .into_iter()
@@ -195,7 +211,7 @@ fn build_blocks(block: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
 
 fn ast_to_func(func: ast::FuncDef, data: &mut FunctionData) {
     let flow = data.dfg_mut();
-    let seq = func.block.into_func_ir(flow);
+    let seq = func_scope(func.block, flow);
 
     data.layout_mut()
         .bbs_mut()

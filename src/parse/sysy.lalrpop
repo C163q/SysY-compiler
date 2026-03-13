@@ -107,6 +107,8 @@ BlockItem: BlockItem = {
 /// Stmt ::= "return" Number ";";
 Stmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::new_assign(<>),
+    <e:Exp?> ";" => Stmt::new_expr(e),
+    <Block> => Stmt::new_block(<>),
     "return" <Exp> ";" => Stmt::new_return(<>),
 }
 

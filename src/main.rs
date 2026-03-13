@@ -5,7 +5,7 @@ use std::{
 };
 
 fn print_usage() {
-    eprintln!("Usage: sysy-compiler <mode> <input> -o <output>");
+    eprintln!("Usage: sysy_compiler <mode> <input> -o <output>");
     eprintln!("Modes:");
     eprintln!("  -koopa: Output Koopa IR");
     eprintln!("  -riscv: Output RISC-V assembly");
