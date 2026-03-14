@@ -1,26 +1,37 @@
-use koopa::ir::{FunctionData, Program, TypeKind, Value, ValueKind};
+use std::num::NonZero;
+
+use koopa::ir::{FunctionData, Program, TypeKind, ValueKind};
 
 use crate::asm::{
-    inst,
-    meta::{FunctionContext, RV32Usize, RiscvAsm, ToAsm},
+    block, inst,
+    meta::{FunctionContext, RV32Usize, RiscvAsm},
 };
 
-impl ToAsm for FunctionData {
-    fn to_asm(&self, _: Option<&mut FunctionContext<'_>>, _: Option<Value>) -> Vec<RiscvAsm> {
-        let mut context = FunctionContext::new(self);
-        let name = &self.name()[1..]; // ignore the leading '@'
-        let mut insts = vec![inst::label(name)];
-        insts.extend(function_prologue(&mut context));
-        for (&_bb, node) in self.layout().bbs() {
-            insts.extend(node.to_asm(Some(&mut context), None));
-        }
-        insts
+pub fn register_func(func: &FunctionData) -> Option<RiscvAsm> {
+    let name = &func.name()[1..]; // ignore the leading '@'
+    Some(RiscvAsm::Global(name.to_string()))
+}
+
+pub fn function_assembly(func: &FunctionData, id: NonZero<usize>) -> Vec<RiscvAsm> {
+    let mut context = FunctionContext::new(func, id);
+    let name = context.get_label(
+        func.layout()
+            .entry_bb()
+            .expect("Function declaration cannot generate assembly"),
+    );
+    let mut insts = vec![inst::label(&name)];
+    insts.extend(function_prologue(&mut context));
+
+    // insert block labels first so that jump instructions can find the labels
+    for (&bb, _) in func.layout().bbs() {
+        context.block_labels.insert(bb);
     }
 
-    fn register(&self) -> Option<RiscvAsm> {
-        let name = &self.name()[1..]; // ignore the leading '@'
-        Some(RiscvAsm::Global(name.to_string()))
+    // generate instructions after all block labels are inserted
+    for (&bb, node) in func.layout().bbs() {
+        insts.extend(block::create_block(node, &mut context, bb));
     }
+    insts
 }
 
 pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
@@ -41,7 +52,10 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
                 ValueKind::Load(_) | ValueKind::Store(_) | ValueKind::Binary(_) => {
                     context.memory_mapper.allocate(ty.size() as RV32Usize)
                 }
-                _ => unimplemented!("Value kind {:?} not implemented in function prologue", data.kind()),
+                _ => unimplemented!(
+                    "Value kind {:?} not implemented in function prologue",
+                    data.kind()
+                ),
             }
         }
     }
@@ -53,16 +67,16 @@ pub fn register_global_func(program: &Program) -> Vec<RiscvAsm> {
     let mut vec = vec![];
     for &func in program.func_layout() {
         let func_data = program.func(func);
-        vec.extend(func_data.register().into_iter());
+        vec.extend(register_func(func_data).into_iter());
     }
     vec
 }
 
 pub fn generate_funcs(program: &Program) -> Vec<RiscvAsm> {
     let mut vec = vec![];
-    for &func in program.func_layout() {
+    for (id, &func) in program.func_layout().iter().enumerate() {
         let func_data = program.func(func);
-        vec.extend(func_data.to_asm(None, None));
+        vec.extend(function_assembly(func_data, NonZero::new(id + 1).unwrap()));
         vec.push(RiscvAsm::None);
     }
     vec

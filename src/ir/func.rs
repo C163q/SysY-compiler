@@ -6,8 +6,7 @@ use koopa::ir::{
 
 use crate::{
     ir::meta::{
-        ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager, last_flow,
-        last_inst_vec,
+        ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager, last_inst_vec,
     },
     parse::ast::{self, BType},
 };
@@ -99,8 +98,7 @@ impl IntoIr for ast::VarDecl {
                 .unwrap_or_else(|e| panic!("Error defining variable: {}", e));
             if let Some(init_val) = init_val {
                 init_val.expr.into_ir(dfg, manager, flows);
-                let src = *last_flow(flows)
-                    .insts
+                let src = *last_inst_vec(flows)
                     .last()
                     .copied()
                     .expect("Initialization expression should produce at least one value")
@@ -191,10 +189,102 @@ impl IntoIr for ast::Stmt {
             }
             // { BlockItems,* }
             ast::Stmt::Block(block) => block.into_ir(dfg, manager, flows),
-            ast::Stmt::If(_if_block) => unimplemented!(),
+            ast::Stmt::If(if_block) => if_block.into_ir(dfg, manager, flows),
             ast::Stmt::Else(_) => unreachable!("Else should be handled in if_else_bind"),
-            ast::Stmt::IfElse(_if_block, _else_block) => unimplemented!(),
+            ast::Stmt::IfElse(if_block, else_block) => {
+                (*if_block, *else_block).into_ir(dfg, manager, flows)
+            }
         }
+    }
+}
+
+impl IntoIr for ast::IfBranch {
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    ) {
+        // END declaration
+        let end_block = dfg.new_bb().basic_block(None);
+
+        // IF
+        self.cond.into_ir(dfg, manager, flows);
+        let cond_val = *last_inst_vec(flows)
+            .last()
+            .copied()
+            .expect("Condition expression should produce at least one value")
+            .inst();
+
+        let mut if_flow = vec![];
+
+        // THEN
+        let then_block = dfg.new_bb().basic_block(None);
+        let then_flow = BlockFlow::new(then_block, vec![]);
+        if_flow.push(then_flow);
+
+        self.stmt.into_ir(dfg, manager, &mut if_flow);
+        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
+
+        // END
+        let end_flow = BlockFlow::new(end_block, vec![]);
+        last_inst_vec(flows).push(Instruction::new(
+            dfg.new_value().branch(cond_val, then_block, end_block),
+            true,
+        ));
+        if_flow.push(end_flow);
+
+        flows.extend(if_flow);
+    }
+}
+
+impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    ) {
+        let (if_branch, else_branch) = self;
+
+        // END declaration
+        let end_block = dfg.new_bb().basic_block(None);
+
+        // IF
+        if_branch.cond.into_ir(dfg, manager, flows);
+        let cond_val = *last_inst_vec(flows)
+            .last()
+            .copied()
+            .expect("Condition expression should produce at least one value")
+            .inst();
+
+        let mut if_flow = vec![];
+
+        // THEN
+        let then_block = dfg.new_bb().basic_block(None);
+        let then_flow = BlockFlow::new(then_block, vec![]);
+        if_flow.push(then_flow);
+
+        if_branch.stmt.into_ir(dfg, manager, &mut if_flow);
+        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
+
+        // ELSE
+        let else_block = dfg.new_bb().basic_block(None);
+        let else_flow = BlockFlow::new(else_block, vec![]);
+        if_flow.push(else_flow);
+
+        else_branch.stmt.into_ir(dfg, manager, &mut if_flow);
+        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
+
+        // END
+        let end_flow = BlockFlow::new(end_block, vec![]);
+        last_inst_vec(flows).push(Instruction::new(
+            dfg.new_value().branch(cond_val, then_block, else_block),
+            true,
+        ));
+        if_flow.push(end_flow);
+
+        flows.extend(if_flow);
     }
 }
 

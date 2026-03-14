@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::iter;
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Alloc, Integer, Store};
+use koopa::ir::values::{Alloc, Branch, Integer, Jump, Store};
 use koopa::ir::{BinaryOp as KBinaryOp, TypeKind, ValueKind};
 use koopa::ir::{
     Value,
@@ -62,7 +62,7 @@ pub fn get_value(
                 if let Some(r) = handle_special_cases(value_data) {
                     return iter::once(r).collect();
                 }
-                asms.extend(value_data.to_asm(Some(context), Some(value)));
+                asms.extend(value_data.to_asm(context, value));
                 let maybe_value = context.register_mapper.get_by_value(&value);
                 match maybe_value {
                     Some(reg_set) => reg_set.clone(),
@@ -87,15 +87,9 @@ pub fn obtain_caller_directly_usable_register(context: &FunctionContext) -> Regi
 }
 
 impl ToAsm for Integer {
-    fn to_asm(
-        &self,
-        context: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm> {
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         // When self.value() == 0, you should use the zero register instead of loading 0 into a
         // register with this function.
-        let context = context.expect("FunctionContext not found for Integer");
-        let id = id.expect("Value not found for Integer");
         let rd = obtain_caller_directly_usable_register(context);
         vec![inst::li_instruction(
             rd,
@@ -106,9 +100,7 @@ impl ToAsm for Integer {
 }
 
 impl ToAsm for Return {
-    fn to_asm(&self, context: Option<&mut FunctionContext>, id: Option<Value>) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for Return");
-        let id = id.expect("Value not found for Return");
+    fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
         let mut asms = vec![];
         match self.value() {
             None => {
@@ -138,13 +130,7 @@ impl ToAsm for Return {
 }
 
 impl ToAsm for Binary {
-    fn to_asm(
-        &self,
-        func_data: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm> {
-        let context = func_data.expect("FunctionContext not found for Binary");
-        let id = id.expect("Value not found for Binary");
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         let mut asms = vec![];
 
         let lhs_reg = *get_value(self.lhs(), context, &mut asms)
@@ -376,24 +362,18 @@ impl ToAsm for Binary {
 }
 
 impl ToAsm for Alloc {
-    fn to_asm(
-        &self,
-        context: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for Alloc");
-        let id = id.expect("Value not found for Alloc");
-
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         // Alloc has a type of pointer.
         let ty_ptr = context.func_data.dfg().value(id).ty();
 
         // But we need to store the underlying type in the stack, so we need to get the underlying
         // type of the pointer.
         let size = match ty_ptr.kind() {
-            TypeKind::Pointer(ty) => {
-                ty.size()
-            }
-            _ => panic!("The type of Alloc value is expected to be pointer, but found {:?}", ty_ptr),
+            TypeKind::Pointer(ty) => ty.size(),
+            _ => panic!(
+                "The type of Alloc value is expected to be pointer, but found {:?}",
+                ty_ptr
+            ),
         };
 
         context.memory_mapper.claim(id, size as RV32Usize);
@@ -402,13 +382,7 @@ impl ToAsm for Alloc {
 }
 
 impl ToAsm for Load {
-    fn to_asm(
-        &self,
-        context: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for Load");
-        let id = id.expect("Value not found for Load");
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         let size = context.func_data.dfg().value(self.src()).ty().size() as u32;
         let mut asms = vec![];
 
@@ -453,13 +427,7 @@ impl ToAsm for Load {
 }
 
 impl ToAsm for Store {
-    fn to_asm(
-        &self,
-        context: Option<&mut FunctionContext<'_>>,
-        id: Option<Value>,
-    ) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for Store");
-        let id = id.expect("Value not found for Store");
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         let size = context.func_data.dfg().value(self.dest()).ty().size() as u32;
         let mut asms = vec![];
 
@@ -483,6 +451,37 @@ impl ToAsm for Store {
 
         // Only clear the binding between the stored value and the register.
         context.register_mapper.remove(self.value(), rd);
+
+        asms
+    }
+}
+
+impl ToAsm for Jump {
+    fn to_asm(&self, context: &mut FunctionContext<'_>, _: Value) -> Vec<RiscvAsm> {
+        let _args = self.args(); // For now, the IR doesn't support passing arguments.
+        let target = self.target();
+        vec![inst::j_instruction(&context.get_label(target))]
+    }
+}
+
+impl ToAsm for Branch {
+    fn to_asm(&self, context: &mut FunctionContext<'_>, _: Value) -> Vec<RiscvAsm> {
+        let _true_args = self.true_args(); // For now, the IR doesn't support passing arguments.
+        let _false_args = self.false_args();
+        let mut asms = vec![];
+
+        let cond_reg = *get_value(self.cond(), context, &mut asms)
+            .iter()
+            .next()
+            .expect("No register assigned for branch condition");
+
+        let true_label = context.get_label(self.true_bb());
+        let false_label = context.get_label(self.false_bb());
+
+        asms.push(inst::bnez_instruction(cond_reg, &true_label));
+        asms.push(inst::j_instruction(&false_label));
+
+        context.register_mapper.remove(self.cond(), cond_reg);
 
         asms
     }

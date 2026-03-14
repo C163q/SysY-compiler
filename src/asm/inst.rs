@@ -134,6 +134,26 @@ pub fn sw_instruction(
     })
 }
 
+pub fn j_instruction(label: &str) -> RiscvAsm {
+    RiscvAsm::Instruction(RiscvInstruction::J {
+        label: label.to_string(),
+    })
+}
+
+pub fn beqz_instruction(src: Register, label: &str) -> RiscvAsm {
+    RiscvAsm::Instruction(RiscvInstruction::Beqz {
+        src,
+        label: label.to_string(),
+    })
+}
+
+pub fn bnez_instruction(src: Register, label: &str) -> RiscvAsm {
+    RiscvAsm::Instruction(RiscvInstruction::Bnez {
+        src,
+        label: label.to_string(),
+    })
+}
+
 macro_rules! reusable_register_dest {
     ($ctx:expr, $dest:expr) => {
         if let Some(ctx) = $ctx {

@@ -2,10 +2,11 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fmt::{self, Debug, Display},
     mem,
+    num::NonZero,
     ops::{Deref, DerefMut},
 };
 
-use koopa::ir::{FunctionData, Value};
+use koopa::ir::{BasicBlock, FunctionData, Value};
 
 use crate::asm::inst;
 
@@ -46,6 +47,9 @@ pub const INST_SET_IF_EQUAL_TO_ZERO: &str = "seqz";
 pub const INST_SET_IF_NOT_EQUAL_TO_ZERO: &str = "snez";
 pub const INST_SET_IF_LESS_THAN: &str = "slt";
 pub const INST_SET_IF_GREATER_THAN: &str = "sgt";
+pub const INST_JUMP: &str = "j";
+pub const INST_BRANCH_IF_EQUAL_TO_ZERO: &str = "beqz";
+pub const INST_BRANCH_IF_NOT_EQUAL_TO_ZERO: &str = "bnez";
 
 pub type RV32Usize = u32;
 pub type RV32Isize = i32;
@@ -536,11 +540,39 @@ impl MemoryMapper {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct BlockLabels {
+    entry_id: BasicBlock,
+    mapper: HashMap<BasicBlock, usize>,
+}
+
+impl BlockLabels {
+    pub fn new(entry_id: BasicBlock) -> Self {
+        BlockLabels {
+            entry_id,
+            mapper: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, bb: BasicBlock) {
+        if bb != self.entry_id && !self.mapper.contains_key(&bb) {
+            let label_id = self.mapper.len() + 1;
+            self.mapper.insert(bb, label_id);
+        }
+    }
+
+    pub fn entry_id(&self) -> BasicBlock {
+        self.entry_id
+    }
+}
+
 pub struct FunctionContext<'a> {
     pub func_data: &'a FunctionData,
     pub register_mapper: RegisterMapper,
     /// i32为偏移量
     pub memory_mapper: MemoryMapper,
+    pub block_labels: BlockLabels,
+    func_id: NonZero<usize>,
 }
 
 impl Debug for FunctionContext<'_> {
@@ -554,12 +586,35 @@ impl Debug for FunctionContext<'_> {
 }
 
 impl FunctionContext<'_> {
-    pub fn new<'a>(func_data: &'a FunctionData) -> FunctionContext<'a> {
+    pub fn new<'a>(func_data: &'a FunctionData, id: NonZero<usize>) -> FunctionContext<'a> {
+        let entry_id = func_data
+            .layout()
+            .entry_bb()
+            .expect("FATAL: cannot generate asm for a function declaration.");
         FunctionContext {
             func_data,
             register_mapper: RegisterMapper::new(),
             memory_mapper: MemoryMapper::new(),
+            block_labels: BlockLabels::new(entry_id),
+            func_id: id,
         }
+    }
+
+    pub fn get_label(&self, bb: BasicBlock) -> String {
+        if bb == self.block_labels.entry_id() {
+            self.func_data.name()[1..].to_string()
+        } else {
+            let id = self
+                .block_labels
+                .mapper
+                .get(&bb)
+                .expect("FATAL: basic block not found in block labels");
+            format!("LBB{}_{}", self.get_func_id(), id)
+        }
+    }
+
+    pub fn get_func_id(&self) -> NonZero<usize> {
+        self.func_id
     }
 }
 
@@ -568,13 +623,7 @@ impl FunctionContext<'_> {
 /// 对于某些IR数据，可能需要首先注册才行，否则无法直接使用它们的名字（例如函数）。
 pub trait ToAsm {
     /// 产生汇编代码，不负责注册。
-    fn to_asm(&self, context: Option<&mut FunctionContext<'_>>, id: Option<Value>)
-    -> Vec<RiscvAsm>;
-
-    /// 注册，对于某些全局数据，这是必须的步骤。
-    fn register(&self) -> Option<RiscvAsm> {
-        None
-    }
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm>;
 }
 
 #[derive(Debug, Clone)]
@@ -660,6 +709,17 @@ pub enum RiscvInstruction {
         dest: Register,
         src1: Register,
         src2: Register,
+    },
+    J {
+        label: String,
+    },
+    Beqz {
+        src: Register,
+        label: String,
+    },
+    Bnez {
+        src: Register,
+        label: String,
     },
 }
 
@@ -776,6 +836,29 @@ impl Display for RiscvInstruction {
             }
             RiscvInstruction::Sgt { dest, src1, src2 } => {
                 binary_inst_format!(INST_SET_IF_GREATER_THAN, dest, src1, src2, f)
+            }
+            RiscvInstruction::J { label } => {
+                write!(f, "{}{} {}", INDENT, INST_JUMP, label)
+            }
+            RiscvInstruction::Beqz { src, label } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_BRANCH_IF_EQUAL_TO_ZERO,
+                    src.name(),
+                    label
+                )
+            }
+            RiscvInstruction::Bnez { src, label } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_BRANCH_IF_NOT_EQUAL_TO_ZERO,
+                    src.name(),
+                    label
+                )
             }
         }
     }

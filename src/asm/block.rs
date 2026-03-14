@@ -1,34 +1,40 @@
-use koopa::ir::{Value, ValueKind, entities::ValueData, layout::BasicBlockNode};
+use koopa::ir::{BasicBlock, Value, ValueKind, entities::ValueData, layout::BasicBlockNode};
 
 use crate::asm::meta::{FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm};
 
 impl ToAsm for ValueData {
-    fn to_asm(&self, context: Option<&mut FunctionContext>, id: Option<Value>) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for ValueData");
-        let id = id.expect("Value not found for ValueData");
+    fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
         let mut asms = vec![];
         match self.kind() {
             ValueKind::Integer(num) => {
                 if num.value() != 0 {
-                    asms.extend(num.to_asm(Some(context), Some(id)));
+                    asms.extend(num.to_asm(context, id));
                 } else {
-                    context.register_mapper.insert(RegisterValue::InstRet(id), Register::Zero);
+                    context
+                        .register_mapper
+                        .insert(RegisterValue::InstRet(id), Register::Zero);
                 }
             }
             ValueKind::Return(expr) => {
-                asms.extend(expr.to_asm(Some(context), Some(id)));
+                asms.extend(expr.to_asm(context, id));
             }
             ValueKind::Binary(bin) => {
-                asms.extend(bin.to_asm(Some(context), Some(id)));
+                asms.extend(bin.to_asm(context, id));
             }
             ValueKind::Alloc(alloc) => {
-                asms.extend(alloc.to_asm(Some(context), Some(id)));
+                asms.extend(alloc.to_asm(context, id));
             }
             ValueKind::Load(load) => {
-                asms.extend(load.to_asm(Some(context), Some(id)));
+                asms.extend(load.to_asm(context, id));
             }
             ValueKind::Store(store) => {
-                asms.extend(store.to_asm(Some(context), Some(id)));
+                asms.extend(store.to_asm(context, id));
+            }
+            ValueKind::Jump(jump) => {
+                asms.extend(jump.to_asm(context, id));
+            }
+            ValueKind::Branch(branch) => {
+                asms.extend(branch.to_asm(context, id));
             }
             _ => unimplemented!(),
         }
@@ -36,15 +42,19 @@ impl ToAsm for ValueData {
     }
 }
 
-impl ToAsm for BasicBlockNode {
-    fn to_asm(&self, context: Option<&mut FunctionContext>, _: Option<Value>) -> Vec<RiscvAsm> {
-        let context = context.expect("FunctionContext not found for BasicBlockNode");
-        let mut asms = vec![];
-        let instructions = self.insts();
-        for &inst in instructions.keys() {
-            let inst_data = context.func_data.dfg().value(inst);
-            asms.extend(inst_data.to_asm(Some(context), Some(inst)));
-        }
-        asms
+pub fn create_block(
+    node: &BasicBlockNode,
+    context: &mut FunctionContext,
+    id: BasicBlock,
+) -> Vec<RiscvAsm> {
+    let mut asms = vec![];
+    if id != context.block_labels.entry_id() {
+        asms.push(RiscvAsm::Label(context.get_label(id)));
     }
+    let insts = node.insts();
+    for &insts in insts.keys() {
+        let inst_data = context.func_data.dfg().value(insts);
+        asms.extend(inst_data.to_asm(context, insts));
+    }
+    asms
 }
