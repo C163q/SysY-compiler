@@ -156,6 +156,10 @@ impl IntoIr for ast::Stmt {
                 let some_last = vec.last().copied();
                 let ret = dfg.new_value().ret(some_last.map(|v| *v.inst()));
                 vec.push(Instruction::new(ret, true));
+                // Return means a basic block should end, we must push a new basic block for the
+                // following statements. Otherwise, we may generate instructions after return
+                // instructions, which is invalid.
+                flows.push(BlockFlow::new(dfg.new_bb().basic_block(None), vec![]));
             }
             // lval = expr;
             ast::Stmt::Assign(lval, expr) => {
@@ -450,6 +454,9 @@ fn func_scope(mut scope: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> 
     for item in scope.items {
         item.into_ir(dfg, guard.inner(), &mut flows);
     }
+
+    // We always insert a new basic block after return. So we have to filter them out.
+    let mut flows = flows.into_iter().filter(|flow| !flow.insts.is_empty()).collect::<Vec<_>>();
 
     for insts in flows.iter_mut() {
         let mut reach_end = false;

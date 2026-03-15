@@ -147,8 +147,10 @@ impl IntoIr for ast::LAndExpr {
                 //   result = rhs != 0;
                 // }
 
-                let tmp_val = dfg.new_value().alloc(Type::get_i32());
                 let tmp_name = manager.unique_tmpname("land");
+
+                let tmp_val = dfg.new_value().alloc(Type::get_i32());
+                dfg.set_value_name(tmp_val, Some(tmp_name.clone()));
                 manager
                     .define_var(tmp_name.clone(), tmp_val, Type::get_i32())
                     .expect("%tmp variable should not be defined");
@@ -179,10 +181,6 @@ impl IntoIr for ast::LAndExpr {
 
                 let load = dfg.new_value().load(tmp_val);
                 last_inst_vec(flows).push(Instruction::new(load, true));
-
-                manager
-                    .undefine_var(&tmp_name)
-                    .expect("%tmp variable should be defined");
             }
         }
     }
@@ -215,7 +213,9 @@ impl IntoIr for ast::LOrExpr {
                 // }
 
                 let tmp_name = manager.unique_tmpname("lor");
+
                 let tmp_val = dfg.new_value().alloc(Type::get_i32());
+                dfg.set_value_name(tmp_val, Some(tmp_name.clone()));
                 manager
                     .define_var(tmp_name.clone(), tmp_val, Type::get_i32())
                     .expect("tmp variable should not be defined");
@@ -247,10 +247,6 @@ impl IntoIr for ast::LOrExpr {
 
                 let load = dfg.new_value().load(tmp_val);
                 last_inst_vec(flows).push(Instruction::new(load, true));
-
-                manager
-                    .undefine_var(&tmp_name)
-                    .expect("tmp variable should be defined");
             }
         }
     }

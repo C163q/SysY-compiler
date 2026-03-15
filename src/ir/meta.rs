@@ -140,6 +140,7 @@ impl ScopedVariableManager {
 #[derive(Debug, Clone)]
 pub struct VariableManager {
     scopes: Vec<ScopedVariableManager>,
+    temp_var_counter: HashMap<String, usize>,
 }
 
 impl Default for VariableManager {
@@ -150,7 +151,10 @@ impl Default for VariableManager {
 
 impl VariableManager {
     pub fn new() -> Self {
-        Self { scopes: vec![] }
+        Self {
+            scopes: vec![],
+            temp_var_counter: HashMap::new(),
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&Variable> {
@@ -194,11 +198,12 @@ impl VariableManager {
         self.scopes.pop();
     }
 
-    pub fn unique_tmpname(&self, prefix: &str) -> String {
-        let mut count: usize = 0;
+    pub fn unique_tmpname(&mut self, prefix: &str) -> String {
+        let mut count: usize = self.temp_var_counter.get(prefix).copied().unwrap_or(0) + 1;
         loop {
             let name = format!("%{}{}", prefix, count);
             if self.get(&name).is_none() {
+                self.temp_var_counter.insert(prefix.to_string(), count);
                 return name;
             }
             count = count
