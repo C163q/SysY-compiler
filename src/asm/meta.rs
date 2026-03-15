@@ -378,6 +378,12 @@ impl StackSizeAllocator {
         } else {
             self.size + (STACK_ALIGNMENT - self.size % STACK_ALIGNMENT)
         };
+        println!(
+            "Allocating stack size: {}, aligned size: {}, total size: {}",
+            size,
+            self.stack_size(),
+            self.size()
+        );
         self.stack_size() - old_size
     }
 
@@ -457,6 +463,14 @@ impl MemoryMapper {
 
     pub fn claim(&mut self, value: Value, size: RV32Usize) {
         if !self.map.contains_key(&value) {
+            if self.claimed + size > self.size() {
+                panic!(
+                    "Claiming value {:?} with size {} exceeds allocated stack size {}",
+                    value,
+                    size,
+                    self.size()
+                );
+            }
             self.map.insert(value, self.claimed);
             self.claimed += size;
         } else {

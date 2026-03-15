@@ -1,5 +1,5 @@
 use koopa::ir::{
-    BinaryOp,
+    BinaryOp, Type,
     builder::{LocalInstBuilder, ValueBuilder},
     dfg::DataFlowGraph,
 };
@@ -9,7 +9,7 @@ use crate::{
         func::BlockFlow,
         meta::{ConstValue, Instruction, IntoIr, Variable, VariableManager, last_inst_vec},
     },
-    parse::ast,
+    parse::ast::{self, EqExpr},
 };
 
 impl IntoIr for ast::Expr {
@@ -142,33 +142,47 @@ impl IntoIr for ast::LAndExpr {
         match self {
             ast::LAndExpr::Eq(expr) => expr.into_ir(dfg, manager, flows),
             ast::LAndExpr::Binary(lhs, rhs) => {
-                lhs.into_ir(dfg, manager, flows);
-                let lhs = *last_inst_vec(flows)
-                    .last()
-                    .copied()
-                    .expect("LAndExpr expect a value")
-                    .inst();
+                // int result = 0;
+                // if (lhs != 0) {
+                //   result = rhs != 0;
+                // }
 
-                rhs.into_ir(dfg, manager, flows);
-                let rhs = *last_inst_vec(flows)
-                    .last()
-                    .copied()
-                    .expect("LAndExpr expect a value")
-                    .inst();
-
-                // lhs && rhs == (lhs != 0) & (rhs != 0)
+                let tmp_val = dfg.new_value().alloc(Type::get_i32());
+                let tmp_name = manager.unique_tmpname("land");
+                manager
+                    .define_var(tmp_name.clone(), tmp_val, Type::get_i32())
+                    .expect("%tmp variable should not be defined");
                 let zero = dfg.new_value().integer(0);
-                let lhs_comp = dfg.new_value().binary(BinaryOp::NotEq, lhs, zero);
-                let rhs_comp = dfg.new_value().binary(BinaryOp::NotEq, rhs, zero);
-                let comp = dfg.new_value().binary(BinaryOp::And, lhs_comp, rhs_comp);
-                let vec = last_inst_vec(flows);
-                vec.extend(vec![
-                    // Zero is not an actual IR, but we need it to compare with lhs and rhs.
+                let store_zero = dfg.new_value().store(zero, tmp_val);
+                last_inst_vec(flows).extend(vec![
+                    Instruction::new(tmp_val, true),
                     Instruction::new(zero, false),
-                    Instruction::new(lhs_comp, true),
-                    Instruction::new(rhs_comp, true),
-                    Instruction::new(comp, true),
+                    Instruction::new(store_zero, true),
                 ]);
+
+                ast::IfBranch::new(
+                    ast::Expr::new_eq(ast::EqExpr::new_binary(
+                        EqExpr::new_expr(ast::Expr::new_land(*lhs)),
+                        ast::EqOp::NotEq,
+                        ast::RelExpr::new_num(ast::Number::new(0)),
+                    )),
+                    ast::Stmt::Assign(
+                        ast::LVal::new(tmp_name.clone()),
+                        ast::Expr::new_eq(ast::EqExpr::new_binary(
+                            *rhs,
+                            ast::EqOp::NotEq,
+                            ast::RelExpr::new_num(ast::Number::new(0)),
+                        )),
+                    ),
+                )
+                .into_ir(dfg, manager, flows);
+
+                let load = dfg.new_value().load(tmp_val);
+                last_inst_vec(flows).push(Instruction::new(load, true));
+
+                manager
+                    .undefine_var(&tmp_name)
+                    .expect("%tmp variable should be defined");
             }
         }
     }
@@ -195,30 +209,48 @@ impl IntoIr for ast::LOrExpr {
         match self {
             ast::LOrExpr::And(expr) => expr.into_ir(dfg, manager, flows),
             ast::LOrExpr::Binary(lhs, rhs) => {
-                lhs.into_ir(dfg, manager, flows);
-                let lhs = *last_inst_vec(flows)
-                    .last()
-                    .copied()
-                    .expect("LOrExpr expect a value")
-                    .inst();
-                rhs.into_ir(dfg, manager, flows);
-                let rhs = *last_inst_vec(flows)
-                    .last()
-                    .copied()
-                    .expect("LOrExpr expect a value")
-                    .inst();
+                // int result = 1;
+                // if (lhs == 0) {
+                //   result = rhs != 0;
+                // }
 
-                // lhs || rhs == (lhs | rhs) != 0
-                let zero = dfg.new_value().integer(0);
-                let or = dfg.new_value().binary(BinaryOp::Or, lhs, rhs);
-                let comp = dfg.new_value().binary(BinaryOp::NotEq, or, zero);
-                let vec = last_inst_vec(flows);
-                vec.extend(vec![
-                    // Zero is not an actual IR, but we need it to compare with lhs and rhs.
-                    Instruction::new(zero, false),
-                    Instruction::new(or, true),
-                    Instruction::new(comp, true),
+                let tmp_name = manager.unique_tmpname("lor");
+                let tmp_val = dfg.new_value().alloc(Type::get_i32());
+                manager
+                    .define_var(tmp_name.clone(), tmp_val, Type::get_i32())
+                    .expect("tmp variable should not be defined");
+
+                let one = dfg.new_value().integer(1);
+                let store_one = dfg.new_value().store(one, tmp_val);
+                last_inst_vec(flows).extend(vec![
+                    Instruction::new(tmp_val, true),
+                    Instruction::new(one, false),
+                    Instruction::new(store_one, true),
                 ]);
+
+                ast::IfBranch::new(
+                    ast::Expr::new_eq(ast::EqExpr::new_binary(
+                        EqExpr::new_expr(ast::Expr::new_lor(*lhs)),
+                        ast::EqOp::Eq,
+                        ast::RelExpr::new_num(ast::Number::new(0)),
+                    )),
+                    ast::Stmt::Assign(
+                        ast::LVal::new(tmp_name.clone()),
+                        ast::Expr::new_eq(ast::EqExpr::new_binary(
+                            ast::EqExpr::new_expr(ast::Expr::new_land(*rhs)),
+                            ast::EqOp::NotEq,
+                            ast::RelExpr::new_num(ast::Number::new(0)),
+                        )),
+                    ),
+                )
+                .into_ir(dfg, manager, flows);
+
+                let load = dfg.new_value().load(tmp_val);
+                last_inst_vec(flows).push(Instruction::new(load, true));
+
+                manager
+                    .undefine_var(&tmp_name)
+                    .expect("tmp variable should be defined");
             }
         }
     }

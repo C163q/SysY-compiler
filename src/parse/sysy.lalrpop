@@ -204,7 +204,7 @@ LAndExp: LAndExpr = {
 
 /// LOrExp ::= LAndExp | LOrExp "||" LAndExp;
 LOrExp: LOrExpr = {
-    <LAndExp> => LOrExpr::new_and(<>),
+    <LAndExp> => LOrExpr::new_land(<>),
     <LOrExp> "||" <LAndExp> => LOrExpr::new_binary(<>),
 }
 

@@ -4,6 +4,7 @@ use crate::asm::meta::{FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm
 
 impl ToAsm for ValueData {
     fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
+        println!("{:?}", self);
         let mut asms = vec![];
         match self.kind() {
             ValueKind::Integer(num) => {

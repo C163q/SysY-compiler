@@ -149,6 +149,10 @@ impl Stmt {
     pub fn new_else(else_branch: ElseBranch) -> Self {
         Self::Else(Box::new(else_branch))
     }
+
+    pub fn new_if_else(if_branch: IfBranch, else_branch: ElseBranch) -> Self {
+        Self::IfElse(Box::new(if_branch), Box::new(else_branch))
+    }
 }
 
 impl Display for Stmt {
@@ -442,6 +446,50 @@ impl Expr {
             expr: Box::new(expr),
         }
     }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::new(LOrExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::new(LOrExpr::new_unary(unary))
+    }
+
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::new(LOrExpr::new_mul(mul))
+    }
+
+    pub fn new_add(add: AddExpr) -> Self {
+        Self::new(LOrExpr::new_add(add))
+    }
+
+    pub fn new_rel(rel: RelExpr) -> Self {
+        Self::new(LOrExpr::new_rel(rel))
+    }
+
+    pub fn new_eq(eq: EqExpr) -> Self {
+        Self::new(LOrExpr::new_eq(eq))
+    }
+
+    pub fn new_land(land: LAndExpr) -> Self {
+        Self::new(LOrExpr::new_land(land))
+    }
+
+    pub fn new_lor(lor: LOrExpr) -> Self {
+        Self::new(lor)
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::new(LOrExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::new(LOrExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::new(LOrExpr::new_expr(expr))
+    }
 }
 
 impl Display for Expr {
@@ -465,12 +513,48 @@ pub enum LOrExpr {
 }
 
 impl LOrExpr {
-    pub fn new_and(and: LAndExpr) -> Self {
-        Self::And(and)
+    pub fn new_land(land: LAndExpr) -> Self {
+        Self::And(land)
     }
 
     pub fn new_binary(left: LOrExpr, right: LAndExpr) -> Self {
         Self::Binary(Box::new(left), Box::new(right))
+    }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::And(LAndExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::And(LAndExpr::new_unary(unary))
+    }
+
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::And(LAndExpr::new_mul(mul))
+    }
+
+    pub fn new_add(add: AddExpr) -> Self {
+        Self::And(LAndExpr::new_add(add))
+    }
+
+    pub fn new_rel(rel: RelExpr) -> Self {
+        Self::And(LAndExpr::new_rel(rel))
+    }
+
+    pub fn new_eq(eq: EqExpr) -> Self {
+        Self::And(LAndExpr::new_eq(eq))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::And(LAndExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::And(LAndExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::And(LAndExpr::new_expr(expr))
     }
 }
 
@@ -504,6 +588,38 @@ impl LAndExpr {
 
     pub fn new_binary(left: LAndExpr, right: EqExpr) -> Self {
         Self::Binary(Box::new(left), Box::new(right))
+    }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Eq(EqExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Eq(EqExpr::new_unary(unary))
+    }
+
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::Eq(EqExpr::new_mul(mul))
+    }
+
+    pub fn new_add(add: AddExpr) -> Self {
+        Self::Eq(EqExpr::new_add(add))
+    }
+
+    pub fn new_rel(rel: RelExpr) -> Self {
+        Self::Eq(EqExpr::new_rel(rel))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Eq(EqExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Eq(EqExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Eq(EqExpr::new_expr(expr))
     }
 }
 
@@ -554,6 +670,34 @@ impl EqExpr {
 
     pub fn new_binary(left: EqExpr, op: EqOp, right: RelExpr) -> Self {
         Self::Binary(Box::new(left), op, Box::new(right))
+    }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Rel(RelExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Rel(RelExpr::new_unary(unary))
+    }
+
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::Rel(RelExpr::new_mul(mul))
+    }
+
+    pub fn new_add(add: AddExpr) -> Self {
+        Self::Rel(RelExpr::new_add(add))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Rel(RelExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Rel(RelExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Rel(RelExpr::new_expr(expr))
     }
 }
 
@@ -611,6 +755,30 @@ impl RelExpr {
     pub fn new_binary(left: RelExpr, op: RelOp, right: AddExpr) -> Self {
         Self::Binary(Box::new(left), op, Box::new(right))
     }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Add(AddExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Add(AddExpr::new_unary(unary))
+    }
+
+    pub fn new_mul(mul: MulExpr) -> Self {
+        Self::Add(AddExpr::new_mul(mul))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Add(AddExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Add(AddExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Add(AddExpr::new_expr(expr))
+    }
 }
 
 impl Display for RelExpr {
@@ -660,6 +828,26 @@ impl AddExpr {
 
     pub fn new_binary(left: AddExpr, op: AddOp, right: MulExpr) -> Self {
         Self::Binary(Box::new(left), op, Box::new(right))
+    }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Mul(MulExpr::new_primary(primary))
+    }
+
+    pub fn new_unary(unary: UnaryExpr) -> Self {
+        Self::Mul(MulExpr::new_unary(unary))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Mul(MulExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Mul(MulExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Mul(MulExpr::new_expr(expr))
     }
 }
 
@@ -714,6 +902,22 @@ impl MulExpr {
     pub fn new_binary(left: MulExpr, op: MulOp, right: UnaryExpr) -> Self {
         Self::Binary(Box::new(left), op, Box::new(right))
     }
+
+    pub fn new_primary(primary: PrimaryExpr) -> Self {
+        Self::Unary(UnaryExpr::new_primary(primary))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Unary(UnaryExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Unary(UnaryExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Unary(UnaryExpr::new_expr(expr))
+    }
 }
 
 impl Display for MulExpr {
@@ -766,6 +970,18 @@ impl UnaryExpr {
 
     pub fn new_unary_op(op: UnaryOp, expr: UnaryExpr) -> Self {
         Self::UnaryOp(op, Box::new(expr))
+    }
+
+    pub fn new_num(num: Number) -> Self {
+        Self::Primary(PrimaryExpr::new_num(num))
+    }
+
+    pub fn new_lval(lval: LVal) -> Self {
+        Self::Primary(PrimaryExpr::new_lval(lval))
+    }
+
+    pub fn new_expr(expr: Expr) -> Self {
+        Self::Primary(PrimaryExpr::new_expr(expr))
     }
 }
 

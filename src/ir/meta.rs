@@ -127,6 +127,13 @@ impl ScopedVariableManager {
             }
         }
     }
+
+    pub fn undefine_var(&mut self, name: &str) -> Result<(), String> {
+        match self.map.remove(name) {
+            Some(_) => Ok(()),
+            None => Err(format!("Variable '{}' not defined", name)),
+        }
+    }
 }
 
 /// 管理变量名与其值的映射关系。
@@ -171,12 +178,33 @@ impl VariableManager {
         }
     }
 
+    pub fn undefine_var(&mut self, name: &str) -> Result<(), String> {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.undefine_var(name)
+        } else {
+            Err("No scope available to undefine variable".to_string())
+        }
+    }
+
     pub fn new_scope(&mut self) {
         self.scopes.push(ScopedVariableManager::new());
     }
 
     pub fn exit_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    pub fn unique_tmpname(&self, prefix: &str) -> String {
+        let mut count: usize = 0;
+        loop {
+            let name = format!("%{}{}", prefix, count);
+            if self.get(&name).is_none() {
+                return name;
+            }
+            count = count
+                .checked_add(1)
+                .expect("FATAL: Too many temporary variables.");
+        }
     }
 }
 
