@@ -123,6 +123,8 @@ pub enum Stmt {
     Else(Box<ElseBranch>),
     Block(Block),
     IfElse(Box<IfBranch>, Box<ElseBranch>),
+    While(Box<WhileBranch>),
+    ControlFlow(ControlFlow),
 }
 
 impl Stmt {
@@ -153,6 +155,22 @@ impl Stmt {
     pub fn new_if_else(if_branch: IfBranch, else_branch: ElseBranch) -> Self {
         Self::IfElse(Box::new(if_branch), Box::new(else_branch))
     }
+
+    pub fn new_while(while_branch: WhileBranch) -> Self {
+        Self::While(Box::new(while_branch))
+    }
+
+    pub fn new_control_flow(control_flow: ControlFlow) -> Self {
+        Self::ControlFlow(control_flow)
+    }
+
+    pub fn new_break() -> Self {
+        Self::ControlFlow(ControlFlow::new_break())
+    }
+
+    pub fn new_continue() -> Self {
+        Self::ControlFlow(ControlFlow::new_continue())
+    }
 }
 
 impl Display for Stmt {
@@ -172,6 +190,8 @@ impl Display for Stmt {
                 write!(f, " {}", else_branch)?;
                 Ok(())
             }
+            Stmt::While(while_branch) => write!(f, "{}", while_branch),
+            Stmt::ControlFlow(control_flow) => write!(f, "{}", control_flow),
         }
     }
 }
@@ -208,6 +228,49 @@ impl ElseBranch {
 impl Display for ElseBranch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "else {}", self.stmt)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WhileBranch {
+    pub cond: Expr,
+    pub stmt: Stmt,
+}
+
+impl WhileBranch {
+    pub fn new(cond: Expr, stmt: Stmt) -> Self {
+        Self { cond, stmt }
+    }
+}
+
+impl Display for WhileBranch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "while ({}) {}", self.cond, self.stmt)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ControlFlow {
+    Break,
+    Continue,
+}
+
+impl ControlFlow {
+    pub fn new_break() -> Self {
+        Self::Break
+    }
+
+    pub fn new_continue() -> Self {
+        Self::Continue
+    }
+}
+
+impl Display for ControlFlow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ControlFlow::Break => write!(f, "break;"),
+            ControlFlow::Continue => write!(f, "continue;"),
+        }
     }
 }
 

@@ -378,12 +378,6 @@ impl StackSizeAllocator {
         } else {
             self.size + (STACK_ALIGNMENT - self.size % STACK_ALIGNMENT)
         };
-        println!(
-            "Allocating stack size: {}, aligned size: {}, total size: {}",
-            size,
-            self.stack_size(),
-            self.size()
-        );
         self.stack_size() - old_size
     }
 

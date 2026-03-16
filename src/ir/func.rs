@@ -6,7 +6,7 @@ use koopa::ir::{
 
 use crate::{
     ir::meta::{
-        ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager, last_inst_vec
+        ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager, last_inst_vec,
     },
     parse::ast::{self, BType},
 };
@@ -198,6 +198,8 @@ impl IntoIr for ast::Stmt {
             ast::Stmt::IfElse(if_block, else_block) => {
                 (*if_block, *else_block).into_ir(dfg, manager, flows)
             }
+            ast::Stmt::While(while_block) => while_block.into_ir(dfg, manager, flows),
+            ast::Stmt::ControlFlow(control_flow) => control_flow.into_ir(dfg, manager, flows),
         }
     }
 }
@@ -223,12 +225,14 @@ impl IntoIr for ast::IfBranch {
         let mut if_flow = vec![];
 
         // THEN
+        manager.new_scope();
         let then_block = dfg.new_bb().basic_block(None);
         let then_flow = BlockFlow::new(then_block, vec![]);
         if_flow.push(then_flow);
 
         self.stmt.into_ir(dfg, manager, &mut if_flow);
         last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
+        manager.exit_scope();
 
         // END
         let end_flow = BlockFlow::new(end_block, vec![]);
@@ -265,6 +269,7 @@ impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
         let mut if_flow = vec![];
 
         // THEN
+        manager.new_scope();
         let then_block = dfg.new_bb().basic_block(None);
         let then_flow = BlockFlow::new(then_block, vec![]);
         if_flow.push(then_flow);
@@ -279,6 +284,7 @@ impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
 
         else_branch.stmt.into_ir(dfg, manager, &mut if_flow);
         last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
+        manager.exit_scope();
 
         // END
         let end_flow = BlockFlow::new(end_block, vec![]);
@@ -289,6 +295,79 @@ impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
         if_flow.push(end_flow);
 
         flows.extend(if_flow);
+    }
+}
+
+impl IntoIr for ast::WhileBranch {
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    ) {
+        let mut while_flow = vec![];
+
+        // Basic block declaration
+        let entry = dfg.new_bb().basic_block(None);
+        let body = dfg.new_bb().basic_block(None);
+        let end = dfg.new_bb().basic_block(None);
+
+        // WHILE Condition
+        last_inst_vec(flows).push(Instruction::new(dfg.new_value().jump(entry), true));
+        let entry_flow = BlockFlow::new(entry, vec![]);
+        while_flow.push(entry_flow);
+
+        self.cond.into_ir(dfg, manager, &mut while_flow);
+        let cond_val = *last_inst_vec(&mut while_flow)
+            .last()
+            .copied()
+            .expect("Condition expression should produce at least one value")
+            .inst();
+        last_inst_vec(&mut while_flow).push(Instruction::new(
+            dfg.new_value().branch(cond_val, body, end),
+            true,
+        ));
+
+        // BODY
+        manager.new_loop(entry, end);
+        manager.new_scope();
+        while_flow.push(BlockFlow::new(body, vec![]));
+        self.stmt.into_ir(dfg, manager, &mut while_flow);
+        last_inst_vec(&mut while_flow).push(Instruction::new(dfg.new_value().jump(entry), true));
+        manager.exit_scope();
+        manager.exit_loop();
+
+        // END
+        while_flow.push(BlockFlow::new(end, vec![]));
+        flows.extend(while_flow);
+    }
+}
+
+impl IntoIr for ast::ControlFlow {
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    ) {
+        match self {
+            ast::ControlFlow::Break => {
+                let target = manager
+                    .last_loop()
+                    .expect("Break statement must be inside a loop")
+                    .end();
+                last_inst_vec(flows).push(Instruction::new(dfg.new_value().jump(target), true));
+                flows.push(BlockFlow::new(dfg.new_bb().basic_block(None), vec![]));
+            }
+            ast::ControlFlow::Continue => {
+                let target = manager
+                    .last_loop()
+                    .expect("Continue statement must be inside a loop")
+                    .begin();
+                last_inst_vec(flows).push(Instruction::new(dfg.new_value().jump(target), true));
+                flows.push(BlockFlow::new(dfg.new_bb().basic_block(None), vec![]));
+            }
+        }
     }
 }
 
@@ -317,7 +396,8 @@ fn bind_if_else(
         | ast::Stmt::Assign(_, _)
         | ast::Stmt::Expr(_)
         // Else statement cannot be bound to if statement in a different block.
-        | ast::Stmt::Block(_) => Err((stmt, else_branch)),
+        | ast::Stmt::Block(_)
+        | ast::Stmt::ControlFlow(_) => Err((stmt, else_branch)),
         // see the comment of the `Else` branch in the `bind_if_else_stmt` function for the
         // motivation of the recursive search for the if statement.
         ast::Stmt::If(branch) => match bind_if_else(else_branch, branch.stmt) {
@@ -329,6 +409,14 @@ fn bind_if_else(
             Err((stmt, else_branch)) => Ok(ast::Stmt::new_if_else(
                 ast::IfBranch::new(branch.cond, stmt),
                 *else_branch,
+            )),
+        },
+        // Search for the if statement in the while branch.
+        ast::Stmt::While(branch) => match bind_if_else(else_branch, branch.stmt) {
+            Ok(sub_stmt) => Ok(ast::Stmt::new_while(ast::WhileBranch::new(branch.cond, sub_stmt))),
+            Err((stmt, else_branch)) => Err((
+                ast::Stmt::new_while(ast::WhileBranch::new(branch.cond, stmt)),
+                else_branch
             )),
         },
         // We guarantee that else statements do not exist in `stmt` because they have been bound in
@@ -353,7 +441,10 @@ fn bind_if_else(
 fn bind_if_else_stmt(stmt: ast::Stmt, vec: &mut Vec<ast::BlockItem>) -> Result<ast::Stmt, String> {
     match stmt {
         // For simple statements, we can directly return them without binding.
-        ast::Stmt::Return(_) | ast::Stmt::Assign(_, _) | ast::Stmt::Expr(_) => Ok(stmt),
+        ast::Stmt::Return(_)
+        | ast::Stmt::Assign(_, _)
+        | ast::Stmt::Expr(_)
+        | ast::Stmt::ControlFlow(_) => Ok(stmt),
         // For block statements, we need to bind the if-else statements inside the block.
         // A else statement can only be bound to an if statement in the same block, so we can
         // directly return the new block after binding.
@@ -368,6 +459,10 @@ fn bind_if_else_stmt(stmt: ast::Stmt, vec: &mut Vec<ast::BlockItem>) -> Result<a
         ast::Stmt::If(mut if_branch) => {
             if_branch.stmt = bind_if_else_stmt(if_branch.stmt, vec)?;
             Ok(ast::Stmt::If(if_branch))
+        }
+        ast::Stmt::While(mut while_branch) => {
+            while_branch.stmt = bind_if_else_stmt(while_branch.stmt, vec)?;
+            Ok(ast::Stmt::While(while_branch))
         }
         // For else statements, we need to bind the else statement with the previous if statement.
         // So we need to pop the last statement from the block and search for the nested if
@@ -456,7 +551,10 @@ fn func_scope(mut scope: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> 
     }
 
     // We always insert a new basic block after return. So we have to filter them out.
-    let mut flows = flows.into_iter().filter(|flow| !flow.insts.is_empty()).collect::<Vec<_>>();
+    let mut flows = flows
+        .into_iter()
+        .filter(|flow| !flow.insts.is_empty())
+        .collect::<Vec<_>>();
 
     for insts in flows.iter_mut() {
         let mut reach_end = false;

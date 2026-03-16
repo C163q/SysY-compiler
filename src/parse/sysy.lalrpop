@@ -15,6 +15,7 @@ use crate::parse::ast::{
     Stmt,
     IfBranch,
     ElseBranch,
+    WhileBranch,
     Expr,
     UnaryOp,
     UnaryExpr,
@@ -106,13 +107,23 @@ BlockItem: BlockItem = {
     <Stmt> => BlockItem::new_stmt(<>),
 }
 
-/// Stmt ::= "return" Number ";";
+/// Stmt ::= LVal "=" Exp ";"
+//         | (Exp)? ";"
+//         | Block
+//         | "if" "(" Exp ")" Stmt ("else" Stmt)?
+//         | "while" "(" Exp ")" Stmt
+//         | "break" ";"
+//         | "continue" ";"
+//         | "return" Number ";";
 Stmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::new_assign(<>),
     <e:Exp?> ";" => Stmt::new_expr(e),
     <Block> => Stmt::new_block(<>),
     "if" "(" <Exp> ")" <Stmt> => Stmt::new_if(IfBranch::new(<>)),
     "else" <Stmt> => Stmt::new_else(ElseBranch::new(<>)),
+    "while" "(" <Exp> ")" <Stmt> => Stmt::new_while(WhileBranch::new(<>)),
+    "break" ";" => Stmt::new_break(),
+    "continue" ";" => Stmt::new_continue(),
     "return" <Exp> ";" => Stmt::new_return(<>),
 }
 

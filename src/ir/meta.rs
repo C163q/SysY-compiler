@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use koopa::ir::{Type, Value, dfg::DataFlowGraph};
+use koopa::ir::{BasicBlock, Type, Value, dfg::DataFlowGraph};
 
 use crate::ir::func::BlockFlow;
 
@@ -136,11 +136,32 @@ impl ScopedVariableManager {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ScopedLoop {
+    begin: BasicBlock,
+    end: BasicBlock,
+}
+
+impl ScopedLoop {
+    pub fn new(begin: BasicBlock, end: BasicBlock) -> Self {
+        Self { begin, end }
+    }
+
+    pub fn begin(&self) -> BasicBlock {
+        self.begin
+    }
+
+    pub fn end(&self) -> BasicBlock {
+        self.end
+    }
+}
+
 /// 管理变量名与其值的映射关系。
 #[derive(Debug, Clone)]
 pub struct VariableManager {
     scopes: Vec<ScopedVariableManager>,
     temp_var_counter: HashMap<String, usize>,
+    loops: Vec<ScopedLoop>,
 }
 
 impl Default for VariableManager {
@@ -152,8 +173,9 @@ impl Default for VariableManager {
 impl VariableManager {
     pub fn new() -> Self {
         Self {
-            scopes: vec![],
+            scopes: Vec::new(),
             temp_var_counter: HashMap::new(),
+            loops: Vec::new(),
         }
     }
 
@@ -196,6 +218,18 @@ impl VariableManager {
 
     pub fn exit_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    pub fn new_loop(&mut self, begin: BasicBlock, end: BasicBlock) {
+        self.loops.push(ScopedLoop::new(begin, end));
+    }
+
+    pub fn exit_loop(&mut self) {
+        self.loops.pop();
+    }
+
+    pub fn last_loop(&self) -> Option<&ScopedLoop> {
+        self.loops.last()
     }
 
     pub fn unique_tmpname(&mut self, prefix: &str) -> String {
