@@ -303,6 +303,9 @@ impl IntoIr for ast::UnaryExpr {
                     vec.push(Instruction::new(comp, true));
                 }
             },
+            ast::UnaryExpr::Call(func_call) => {
+                func_call.into_ir(dfg, manager, flows);
+            }
         }
     }
 
@@ -318,6 +321,7 @@ impl IntoIr for ast::UnaryExpr {
                     ast::UnaryOp::Not => Some((val == 0) as i32),
                 }
             }
+            ast::UnaryExpr::Call(_) => None,
         }
     }
 }
@@ -345,6 +349,43 @@ impl IntoIr for ast::PrimaryExpr {
     }
 }
 
+impl IntoIr for ast::FuncCall {
+    fn into_ir(
+        self,
+        dfg: &mut DataFlowGraph,
+        manager: &mut VariableManager,
+        flows: &mut Vec<BlockFlow>,
+    ) {
+        let func = match manager
+            .get(&self.ident)
+            .expect("Function should be defined")
+        {
+            Variable::Var(_) => panic!("'{}' is not a function", self.ident),
+            Variable::Const(val) => match val {
+                ConstValue::Int(_) => panic!("'{}' is not a function", self.ident),
+                ConstValue::Function(func) => *func,
+            },
+        };
+        let args = self
+            .args
+            .unwrap_or(ast::FuncRParams::new(Vec::new()))
+            .params
+            .into_iter()
+            .map(|arg| {
+                arg.into_ir(dfg, manager, flows);
+                *last_inst_vec(flows)
+                    .last()
+                    .copied()
+                    .expect("FuncCall expect a value")
+                    .inst()
+            })
+            .collect::<Vec<_>>();
+
+        let call = dfg.new_value().call(func, args);
+        last_inst_vec(flows).push(Instruction::new(call, true));
+    }
+}
+
 impl IntoIr for ast::LVal {
     fn into_ir(
         self,
@@ -358,6 +399,9 @@ impl IntoIr for ast::LVal {
                 Variable::Const(val) => match val {
                     ConstValue::Int(val) => last_inst_vec(flows)
                         .push(Instruction::new(dfg.new_value().integer(*val), false)),
+                    ConstValue::Function(_) => {
+                        panic!("Function '{}' cannot be used as a value", self.ident)
+                    }
                 },
                 // 若为变量，产生load指令来取得其值。
                 Variable::Var(var) => {
@@ -374,6 +418,7 @@ impl IntoIr for ast::LVal {
             Some(var) => match var {
                 Variable::Const(val) => match val {
                     ConstValue::Int(val) => Some(*val),
+                    ConstValue::Function(_) => None,
                 },
                 // 变量不允许在编译期求值。
                 Variable::Var(_) => None,

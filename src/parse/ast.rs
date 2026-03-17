@@ -4,19 +4,41 @@ use koopa::ir::Type;
 
 #[derive(Debug, Clone)]
 pub struct CompUnit {
+    pub comp_unit: Option<Box<CompUnit>>,
     pub func_def: FuncDef,
 }
 
 /// 文法标识符
 impl CompUnit {
-    pub fn new(func_def: FuncDef) -> Self {
-        Self { func_def }
+    pub fn new(comp_unit: Option<CompUnit>, func_def: FuncDef) -> Self {
+        Self {
+            comp_unit: comp_unit.map(Box::new),
+            func_def,
+        }
     }
 }
 
 impl Display for CompUnit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.func_def)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Components {
+    pub list: Vec<FuncDef>,
+}
+
+impl Components {
+    pub fn new(unit: CompUnit) -> Self {
+        let mut defs = vec![unit.func_def];
+        let mut maybe_unit = unit.comp_unit;
+        while let Some(unit) = maybe_unit {
+            defs.push(unit.func_def);
+            maybe_unit = unit.comp_unit;
+        }
+        defs.reverse();
+        Components { list: defs }
     }
 }
 
@@ -33,14 +55,16 @@ impl Display for CompUnit {
 pub struct FuncDef {
     pub ret_type: BType,
     pub ident: String,
+    pub fparams: Option<FuncFParams>,
     pub block: Block,
 }
 
 impl FuncDef {
-    pub fn new(ret_type: BType, ident: String, block: Block) -> Self {
+    pub fn new(ret_type: BType, ident: String, fparams: Option<FuncFParams>, block: Block) -> Self {
         Self {
             ret_type,
             ident,
+            fparams,
             block,
         }
     }
@@ -49,6 +73,69 @@ impl FuncDef {
 impl Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} {}() {}", self.ret_type, self.ident, self.block)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncFParams {
+    pub params: Vec<FuncFParam>,
+}
+
+impl FuncFParams {
+    pub fn new(params: Vec<FuncFParam>) -> Self {
+        Self { params }
+    }
+}
+impl Display for FuncFParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", param)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncFParam {
+    pub ty: BType,
+    pub ident: String,
+}
+
+impl FuncFParam {
+    pub fn new(ty: BType, ident: String) -> Self {
+        Self { ty, ident }
+    }
+}
+
+impl Display for FuncFParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.ty, self.ident)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncRParams {
+    pub params: Vec<Expr>,
+}
+
+impl FuncRParams {
+    pub fn new(params: Vec<Expr>) -> Self {
+        Self { params }
+    }
+}
+
+impl Display for FuncRParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", param)?;
+        }
+        Ok(())
     }
 }
 
@@ -116,7 +203,7 @@ impl Display for BlockItem {
 /// Return(expr) <-  return 0;
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Return(Expr),
+    Return(Option<Expr>),
     Assign(LVal, Expr),
     Expr(Option<Expr>),
     If(Box<IfBranch>),
@@ -128,7 +215,7 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    pub fn new_return(val: Expr) -> Self {
+    pub fn new_return(val: Option<Expr>) -> Self {
         Self::Return(val)
     }
 
@@ -176,7 +263,10 @@ impl Stmt {
 impl Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::Return(val) => write!(f, "return {};", val),
+            Stmt::Return(val) => match val {
+                Some(val) => write!(f, "return {};", val),
+                None => write!(f, "return;"),
+            },
             Stmt::Assign(lval, expr) => write!(f, "{} = {};", lval, expr),
             Stmt::Expr(expr) => match expr {
                 Some(e) => write!(f, "{};", e),
@@ -336,7 +426,8 @@ impl Display for ConstDecl {
 /// 类型
 #[derive(Debug, Clone, Copy)]
 pub enum BType {
-    Int, // int
+    Int,  // int
+    Void, // void
 }
 
 impl BType {
@@ -349,6 +440,7 @@ impl Display for BType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BType::Int => write!(f, "int"),
+            BType::Void => write!(f, "void"),
         }
     }
 }
@@ -357,6 +449,7 @@ impl From<BType> for Type {
     fn from(btype: BType) -> Self {
         match btype {
             BType::Int => Type::get_i32(),
+            BType::Void => Type::get_unit(),
         }
     }
 }
@@ -1024,6 +1117,7 @@ impl Display for UnaryOp {
 pub enum UnaryExpr {
     Primary(PrimaryExpr),
     UnaryOp(UnaryOp, Box<UnaryExpr>),
+    Call(FuncCall),
 }
 
 impl UnaryExpr {
@@ -1046,6 +1140,10 @@ impl UnaryExpr {
     pub fn new_expr(expr: Expr) -> Self {
         Self::Primary(PrimaryExpr::new_expr(expr))
     }
+
+    pub fn new_call(func_call: FuncCall) -> Self {
+        Self::Call(func_call)
+    }
 }
 
 impl Display for UnaryExpr {
@@ -1053,6 +1151,28 @@ impl Display for UnaryExpr {
         match self {
             UnaryExpr::Primary(primary) => write!(f, "{}", primary),
             UnaryExpr::UnaryOp(op, expr) => write!(f, "{} {}", op, expr),
+            UnaryExpr::Call(func_call) => write!(f, "{}", func_call),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncCall {
+    pub ident: String,
+    pub args: Option<FuncRParams>,
+}
+
+impl FuncCall {
+    pub fn new(ident: String, args: Option<FuncRParams>) -> Self {
+        Self { ident, args }
+    }
+}
+
+impl Display for FuncCall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.args {
+            Some(args) => write!(f, "{}({})", self.ident, args),
+            None => write!(f, "{}()", self.ident),
         }
     }
 }

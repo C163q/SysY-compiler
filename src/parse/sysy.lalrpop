@@ -2,6 +2,10 @@ use crate::parse::ast::{
     Block,
     CompUnit,
     FuncDef,
+    FuncFParams,
+    FuncFParam,
+    FuncRParams,
+    FuncCall,
     BType,
     Decl,
     ConstDecl,
@@ -48,13 +52,25 @@ match {
 }
 
 /// 开始符号为`CompUnit`。
-/// CompUnit ::= FuncDef;
-pub CompUnit: CompUnit = <FuncDef> => CompUnit::new(<>);
+/// CompUnit ::= (CompUnit)? FuncDef;
+pub CompUnit: CompUnit = <CompUnit?> <FuncDef> => CompUnit::new(<>);
 
-/// FuncDef ::= BType IDENT "(" ")" Block;
+/// FuncDef ::= BType IDENT "(" (FuncFParams)? ")" Block;
 FuncDef: FuncDef = {
-    <BType> <Ident> "(" ")" <Block> => FuncDef::new(<>),
+    <BType> <Ident> "(" <FuncFParams?> ")" <Block> => FuncDef::new(<>),
 }
+
+/// FuncFParams ::= FuncFParam ("," FuncFParam)*;
+FuncFParams: FuncFParams = {
+    <param:FuncFParam> <params:("," <FuncFParam>)*> => {
+        let mut vec = vec![param];
+        vec.extend(params);
+        FuncFParams::new(vec)
+    }
+}
+
+/// FuncFParam ::= BType IDENT;
+FuncFParam: FuncFParam = <BType> <Ident> => FuncFParam::new(<>);
 
 /// Decl ::= ConstDecl;
 Decl: Decl = {
@@ -72,7 +88,10 @@ ConstDecl: ConstDecl = {
 }
 
 /// BType ::= "int";
-BType: BType = "int" => BType::Int;
+BType: BType = {
+    "int" => BType::Int,
+    "void" => BType::Void,
+}
 
 /// ConstDef ::= IDENT "=" ConstInitVal;
 ConstDef: ConstDef = <Ident> "=" <ConstInitVal> => ConstDef::new(<>);
@@ -114,7 +133,7 @@ BlockItem: BlockItem = {
 //         | "while" "(" Exp ")" Stmt
 //         | "break" ";"
 //         | "continue" ";"
-//         | "return" Number ";";
+//         | "return" (Exp)? ";";
 Stmt: Stmt = {
     <LVal> "=" <Exp> ";" => Stmt::new_assign(<>),
     <e:Exp?> ";" => Stmt::new_expr(e),
@@ -124,7 +143,7 @@ Stmt: Stmt = {
     "while" "(" <Exp> ")" <Stmt> => Stmt::new_while(WhileBranch::new(<>)),
     "break" ";" => Stmt::new_break(),
     "continue" ";" => Stmt::new_continue(),
-    "return" <Exp> ";" => Stmt::new_return(<>),
+    "return" <Exp?> ";" => Stmt::new_return(<>),
 }
 
 /// Exp ::= AddExp;
@@ -143,9 +162,12 @@ PrimaryExp: PrimaryExpr = {
 /// Number ::= INT_CONST;
 Number: Number = <IntConst> => Number::new(<>);
 
-/// UnaryExp ::= PrimaryExp | UnaryOp UnaryExp;
+/// UnaryExp ::= PrimaryExp
+//             | INDENT "(" (FuncRParams)? ")"
+//             | UnaryOp UnaryExp;
 UnaryExp: UnaryExpr = {
     <PrimaryExp> => UnaryExpr::new_primary(<>),
+    <Ident> "(" <FuncRParams?> ")" => UnaryExpr::new_call(FuncCall::new(<>)),
     <UnaryOp> <UnaryExp> => UnaryExpr::new_unary_op(<>),
 }
 
@@ -221,6 +243,15 @@ LOrExp: LOrExpr = {
 
 /// ConstExp ::= Exp;
 ConstExp: ConstExpr = <Exp> => ConstExpr::new(<>);
+
+/// FuncRParams ::= Exp ("," Exp)*;
+FuncRParams: FuncRParams = {
+    <param:Exp> <params:("," <Exp>)*> => {
+        let mut vec = vec![param];
+        vec.extend(params);
+        FuncRParams::new(vec)
+    }
+}
 
 Ident: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => <>.to_string();
 

@@ -32,20 +32,43 @@ impl BlockFlow {
 
 impl ast::FuncDef {
     /// Add a new function in program without parsing its body.
-    pub fn register_func(&self, program: &mut Program) -> Function {
+    pub fn register_func(&self, program: &mut Program, manager: &mut VariableManager) -> Function {
         let data = {
             let ret_type = self.ret_type.into();
             let func_name = format!("@{}", self.ident);
-            FunctionData::with_param_names(func_name, vec![], ret_type)
+            match self.fparams.clone() {
+                None => FunctionData::with_param_names(func_name, vec![], ret_type),
+                Some(fparams) => FunctionData::with_param_names(
+                    func_name,
+                    fparams
+                        .params
+                        .into_iter()
+                        .map(|param| (Some(format!("@{}", param.ident)), param.ty.into()))
+                        .inspect(|param: &(_, Type)| {
+                            if param.1.is_unit() {
+                                panic!(
+                                    "Parameter '{}' cannot have void type",
+                                    param.0.as_ref().unwrap()
+                                )
+                            }
+                        })
+                        .collect(),
+                    ret_type,
+                ),
+            }
         };
-        program.new_func(data)
+        let value = program.new_func(data);
+        manager
+            .define_const(self.ident.clone(), ConstValue::Function(value))
+            .expect("Error defining function");
+        value
     }
 
     /// parsing function body into IR.
     ///
     /// NOTE: function MUST be registered first.
-    pub fn load_data(self, data: &mut FunctionData) {
-        ast_to_func(self, data);
+    pub fn generate_ir(self, data: &mut FunctionData, manager: &mut VariableManager) {
+        ast_to_func(self, data, manager);
     }
 }
 
@@ -136,6 +159,7 @@ impl IntoIr for ast::ConstDecl {
                         );
                     }
                 },
+                BType::Void => panic!("Void type cannot be used for constant '{}'", ident),
             }
         }
     }
@@ -151,11 +175,20 @@ impl IntoIr for ast::Stmt {
         match self {
             // return val;
             ast::Stmt::Return(expr) => {
-                expr.into_ir(dfg, manager, flows);
-                let vec = last_inst_vec(flows);
-                let some_last = vec.last().copied();
-                let ret = dfg.new_value().ret(some_last.map(|v| *v.inst()));
-                vec.push(Instruction::new(ret, true));
+                let ret_val = match expr {
+                    Some(expr) => {
+                        expr.into_ir(dfg, manager, flows);
+                        let vec = last_inst_vec(flows);
+                        let last = vec
+                            .last()
+                            .copied()
+                            .expect("Return expression should produce at least one value");
+                        Some(*last.inst())
+                    }
+                    None => None,
+                };
+                let ret = dfg.new_value().ret(ret_val);
+                last_inst_vec(flows).push(Instruction::new(ret, true));
                 // Return means a basic block should end, we must push a new basic block for the
                 // following statements. Otherwise, we may generate instructions after return
                 // instructions, which is invalid.
@@ -225,14 +258,16 @@ impl IntoIr for ast::IfBranch {
         let mut if_flow = vec![];
 
         // THEN
-        manager.new_scope();
         let then_block = dfg.new_bb().basic_block(None);
         let then_flow = BlockFlow::new(then_block, vec![]);
-        if_flow.push(then_flow);
+        {
+            let mut guard = ScopeGuard::new(manager);
+            if_flow.push(then_flow);
 
-        self.stmt.into_ir(dfg, manager, &mut if_flow);
-        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
-        manager.exit_scope();
+            self.stmt.into_ir(dfg, guard.inner(), &mut if_flow);
+            last_inst_vec(&mut if_flow)
+                .push(Instruction::new(dfg.new_value().jump(end_block), true));
+        }
 
         // END
         let end_flow = BlockFlow::new(end_block, vec![]);
@@ -268,23 +303,27 @@ impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
 
         let mut if_flow = vec![];
 
-        // THEN
-        manager.new_scope();
         let then_block = dfg.new_bb().basic_block(None);
         let then_flow = BlockFlow::new(then_block, vec![]);
-        if_flow.push(then_flow);
-
-        if_branch.stmt.into_ir(dfg, manager, &mut if_flow);
-        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
-
-        // ELSE
         let else_block = dfg.new_bb().basic_block(None);
         let else_flow = BlockFlow::new(else_block, vec![]);
-        if_flow.push(else_flow);
 
-        else_branch.stmt.into_ir(dfg, manager, &mut if_flow);
-        last_inst_vec(&mut if_flow).push(Instruction::new(dfg.new_value().jump(end_block), true));
-        manager.exit_scope();
+        {
+            // THEN
+            let mut guard = ScopeGuard::new(manager);
+            if_flow.push(then_flow);
+
+            if_branch.stmt.into_ir(dfg, guard.inner(), &mut if_flow);
+            last_inst_vec(&mut if_flow)
+                .push(Instruction::new(dfg.new_value().jump(end_block), true));
+
+            // ELSE
+            if_flow.push(else_flow);
+
+            else_branch.stmt.into_ir(dfg, guard.inner(), &mut if_flow);
+            last_inst_vec(&mut if_flow)
+                .push(Instruction::new(dfg.new_value().jump(end_block), true));
+        }
 
         // END
         let end_flow = BlockFlow::new(end_block, vec![]);
@@ -531,21 +570,54 @@ fn bind_if_else_block(block: ast::Block) -> Result<ast::Block, String> {
     Ok(ast::Block::new(items))
 }
 
-fn func_scope(mut scope: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> {
+fn func_scope(
+    mut scope: ast::Block,
+    data: &mut FunctionData,
+    manager: &mut VariableManager,
+) -> Vec<BlockFlow> {
     // Currently, we only support a single basic block for each function, so we can directly build
     // the entry block and VariableManager.
     let entry = {
-        let block = dfg.new_bb().basic_block(Some("%entry".to_string()));
+        let block = data
+            .dfg_mut()
+            .new_bb()
+            .basic_block(Some("%entry".to_string()));
         BlockFlow::new(block, vec![])
     };
 
     let mut flows = vec![entry];
 
-    let mut manager = VariableManager::new();
-    let mut guard = ScopeGuard::new(&mut manager);
+    let mut guard = ScopeGuard::new(manager);
 
     scope = bind_if_else_block(scope)
         .unwrap_or_else(|e| panic!("Error in binding if-else statements: {}", e));
+
+    let params: Vec<_> = data.params().to_vec();
+    for param in params {
+        let value = data.dfg().value(param);
+        let ty = value.ty().clone();
+        let name = value
+            .name()
+            .as_ref()
+            .map(|s| &s[1..])
+            .unwrap_or_else(|| panic!("Parameter value should have a name starting with '@'"))
+            .to_string();
+
+        let alloc = data.dfg_mut().new_value().alloc(ty.clone());
+        let store = data.dfg_mut().new_value().store(param, alloc);
+        last_inst_vec(&mut flows).extend(vec![
+            Instruction::new(alloc, true),
+            Instruction::new(store, true),
+        ]);
+
+        guard
+            .inner()
+            .define_var(name, alloc, ty)
+            .unwrap_or_else(|e| panic!("Error defining parameter variable: {}", e));
+    }
+
+    let dfg = data.dfg_mut();
+
     for item in scope.items {
         item.into_ir(dfg, guard.inner(), &mut flows);
     }
@@ -584,12 +656,19 @@ fn func_scope(mut scope: ast::Block, dfg: &mut DataFlowGraph) -> Vec<BlockFlow> 
             .collect::<Vec<_>>();
     }
 
+    if flows.last().is_none() {
+        // void f() {}
+        flows.push(BlockFlow::new(
+            dfg.new_bb().basic_block(Some("%entry".to_string())),
+            vec![Instruction::new(dfg.new_value().ret(None), true)],
+        ));
+    }
+
     flows
 }
 
-fn ast_to_func(func: ast::FuncDef, data: &mut FunctionData) {
-    let flow = data.dfg_mut();
-    let seq = func_scope(func.block, flow);
+fn ast_to_func(func: ast::FuncDef, data: &mut FunctionData, manager: &mut VariableManager) {
+    let seq = func_scope(func.block, data, manager);
 
     data.layout_mut()
         .bbs_mut()

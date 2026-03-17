@@ -1,6 +1,12 @@
-use koopa::ir::{BasicBlock, Value, ValueKind, entities::ValueData, layout::BasicBlockNode};
+use koopa::ir::{
+    BasicBlock, Value, ValueKind, entities::ValueData, layout::BasicBlockNode, values::FuncArgRef,
+};
 
-use crate::asm::meta::{FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm};
+use crate::asm::{
+    expr::obtain_caller_directly_usable_register,
+    inst::{self, InstContext},
+    meta::{self, FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm},
+};
 
 impl ToAsm for ValueData {
     fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
@@ -36,9 +42,44 @@ impl ToAsm for ValueData {
             ValueKind::Branch(branch) => {
                 asms.extend(branch.to_asm(context, id));
             }
-            _ => unimplemented!(),
+            ValueKind::FuncArgRef(arg_ref) => {
+                asms.extend(arg_ref.to_asm(context, id));
+            }
+            ValueKind::Call(call) => {
+                asms.extend(call.to_asm(context, id));
+            }
+            _ => unimplemented!("Value kind {:?} is not implemented yet", self.kind()),
         }
         asms
+    }
+}
+
+impl ToAsm for FuncArgRef {
+    fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
+        let size = context.func_data.dfg().value(id).ty().size();
+        let location = context
+            .memory_mapper
+            .get_arg(self, size as meta::RV32Usize)
+            .expect("Failed to get function argument location, it may not exist");
+        match location {
+            meta::ArgLocation::Register(reg) => {
+                context.register_mapper.remove_by_register(reg);
+                context
+                    .register_mapper
+                    .insert(RegisterValue::InstRet(id), reg);
+                vec![]
+            }
+            meta::ArgLocation::Stack(offset) => {
+                let reg = obtain_caller_directly_usable_register(context);
+                inst::add_lw_instruction(
+                    reg,
+                    Register::Sp,
+                    meta::RV32Imm::new(offset as i32),
+                    Some(InstContext::new(context, id)),
+                    Some(reg),
+                )
+            }
+        }
     }
 }
 

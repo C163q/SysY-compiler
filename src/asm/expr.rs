@@ -2,13 +2,14 @@ use std::collections::HashSet;
 use std::iter;
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Alloc, Branch, Integer, Jump, Store};
+use koopa::ir::values::{Alloc, Branch, Call, Integer, Jump, Store};
 use koopa::ir::{BinaryOp as KBinaryOp, TypeKind, ValueKind};
 use koopa::ir::{
     Value,
     values::{Binary, Load, Return},
 };
 
+use crate::asm::func::build_call_stack_and_registers;
 use crate::asm::inst::InstContext;
 use crate::asm::meta::{RV32Imm, RV32Usize};
 use crate::asm::{
@@ -76,10 +77,19 @@ pub fn get_value(
     }
 }
 
+pub fn get_param_registers_filter(count: u8) -> impl Fn(&Register) -> bool {
+    move |r: &Register| {
+        ((*r as u8) < (Register::A0 as u8)) || ((*r as u8) >= (Register::A0 as u8 + count.min(8)))
+    }
+}
+
 pub fn obtain_caller_directly_usable_register(context: &FunctionContext) -> Register {
+    let param_count = context.func_data.params().len().min(8) as u8;
     let available_registers = context
         .register_mapper
-        .get_available_registers_filtered(|r| r.caller_directly_usable());
+        .get_available_registers_filtered(|r| {
+            r.caller_directly_usable() && get_param_registers_filter(param_count)(r)
+        });
     *available_registers
         .iter()
         .next()
@@ -87,7 +97,7 @@ pub fn obtain_caller_directly_usable_register(context: &FunctionContext) -> Regi
 }
 
 impl ToAsm for Integer {
-    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
+    fn to_asm(&self, context: &mut FunctionContext, id: Value) -> Vec<RiscvAsm> {
         // When self.value() == 0, you should use the zero register instead of loading 0 into a
         // register with this function.
         let rd = obtain_caller_directly_usable_register(context);
@@ -104,7 +114,14 @@ impl ToAsm for Return {
         let mut asms = vec![];
         match self.value() {
             None => {
-                asms.extend(context.memory_mapper.resume_stack());
+                asms.extend(inst::add_lw_instruction(
+                    Register::Ra,
+                    Register::Sp,
+                    RV32Imm::new(context.memory_mapper.meta_offset() as i32),
+                    None,
+                    Some(Register::T1),
+                ));
+                asms.extend(context.memory_mapper.stack_resume());
                 context.register_mapper.clear();
                 asms.push(inst::ret_instruction());
             }
@@ -120,7 +137,14 @@ impl ToAsm for Return {
                         Some(InstContext::new(context, id)),
                     ));
                 }
-                asms.extend(context.memory_mapper.resume_stack());
+                asms.extend(inst::add_lw_instruction(
+                    Register::Ra,
+                    Register::Sp,
+                    RV32Imm::new(context.memory_mapper.meta_offset() as i32),
+                    None,
+                    Some(Register::T1),
+                ));
+                asms.extend(context.memory_mapper.stack_resume());
                 context.register_mapper.clear();
                 asms.push(inst::ret_instruction());
             }
@@ -341,7 +365,7 @@ impl ToAsm for Binary {
         // allocation yet.
         let tmp = obtain_caller_directly_usable_register(context);
         let size = context.func_data.dfg().value(id).ty().size() as u32;
-        context.memory_mapper.claim(id, size);
+        context.memory_mapper.stack_claim(id, size);
         let offset = context.memory_mapper.get_offset(&id, size).expect(
             "Error occurs when trying to allocate stack memory for binary operation result",
         );
@@ -376,7 +400,7 @@ impl ToAsm for Alloc {
             ),
         };
 
-        context.memory_mapper.claim(id, size as RV32Usize);
+        context.memory_mapper.stack_claim(id, size as RV32Usize);
         vec![]
     }
 }
@@ -401,7 +425,7 @@ impl ToAsm for Load {
         ));
 
         let ld_size = context.func_data.dfg().value(id).ty().size() as u32;
-        context.memory_mapper.claim(id, ld_size);
+        context.memory_mapper.stack_claim(id, ld_size);
         let offset = context
             .memory_mapper
             .get_offset(&id, ld_size)
@@ -482,6 +506,45 @@ impl ToAsm for Branch {
         asms.push(inst::j_instruction(&false_label));
 
         context.register_mapper.remove(self.cond(), cond_reg);
+
+        asms
+    }
+}
+
+impl ToAsm for Call {
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
+        let mut asms = vec![];
+        context.memory_mapper.new_function_call();
+        let data = context.program.func(self.callee());
+        let args = self.args();
+        let ret_ty = context.func_data.dfg().value(id).ty();
+        asms.extend(build_call_stack_and_registers(context, data, args));
+        context.register_mapper.clear();
+
+        // ignore leading '@' in function name
+        asms.push(inst::call_instruction(&data.name()[1..]));
+
+        asms.extend(context.memory_mapper.function_resume());
+        context.memory_mapper.end_function_call();
+
+        if !ret_ty.is_unit() {
+            let tmp = obtain_caller_directly_usable_register(context);
+            context
+                .memory_mapper
+                .stack_claim(id, ret_ty.size() as RV32Usize);
+            let offset = context
+                .memory_mapper
+                .get_offset(&id, ret_ty.size() as RV32Usize)
+                .expect("Error occurs when trying to get stack memory offset for storing value");
+
+            asms.extend(inst::add_sw_instruction(
+                Register::A0,
+                Register::Sp,
+                RV32Imm::new(offset as i32),
+                Some(InstContext::new(context, id)),
+                Some(tmp),
+            ));
+        }
 
         asms
     }

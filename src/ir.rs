@@ -9,7 +9,7 @@ use koopa::{
     ir::Program,
 };
 
-use crate::parse;
+use crate::parse::{self, ast};
 
 pub struct Ast {
     program: Program,
@@ -57,13 +57,20 @@ impl From<parse::Ast> for Ast {
 /// Function 又由若干基本块 (BasicBlock) 构成，基本块中是一系列指令，指令也是 Value。
 fn parse_to_ir(ast: parse::Ast) -> Program {
     let mut program = Program::new();
-    let func_def = ast.root.func_def;
+    let mut manager = meta::VariableManager::new();
+    let components = ast::Components::new(ast.root);
+    manager.new_scope();
+
     // 必须先注册然后再加载函数体的内容。
     // koopa 库的文档可能说得不太清楚，`Program`会有一个用于存储全局名称的HashMap，
     // 如果没有注册函数，则向`FunctionData`写入数据时，无法向全局写入名称。
     // 本质就是`Weak`无法指向正确的`Rc`导致`upgrade`后调用`unwrap`，然后`panic`了。
-    let func = func_def.register_func(&mut program);
-    func_def.load_data(program.func_mut(func));
+    for func_def in components.list {
+        let func = func_def.register_func(&mut program, &mut manager);
+        func_def.generate_ir(program.func_mut(func), &mut manager);
+    }
+
+    manager.exit_scope();
 
     program
 }

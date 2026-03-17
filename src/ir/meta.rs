@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use koopa::ir::{BasicBlock, Type, Value, dfg::DataFlowGraph};
+use koopa::ir::{BasicBlock, Function, Type, Value, dfg::DataFlowGraph};
 
 use crate::ir::func::BlockFlow;
 
@@ -58,6 +58,7 @@ impl Instruction {
 #[derive(Debug, Clone)]
 pub enum ConstValue {
     Int(i32),
+    Function(Function),
 }
 
 #[derive(Debug, Clone)]

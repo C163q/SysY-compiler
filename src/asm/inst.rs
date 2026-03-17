@@ -33,6 +33,12 @@ pub fn ret_instruction() -> RiscvAsm {
     RiscvAsm::Instruction(RiscvInstruction::Ret)
 }
 
+pub fn call_instruction(func: &str) -> RiscvAsm {
+    RiscvAsm::Instruction(RiscvInstruction::Call {
+        func: func.to_string(),
+    })
+}
+
 pub fn li_instruction(dest: Register, imm: i32, context: Option<InstContext>) -> RiscvAsm {
     register_dest(dest, context);
     RiscvAsm::Instruction(RiscvInstruction::Li {

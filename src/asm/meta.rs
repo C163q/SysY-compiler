@@ -6,7 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use koopa::ir::{BasicBlock, FunctionData, Value};
+use koopa::ir::{BasicBlock, FunctionData, Program, Value, values::FuncArgRef};
 
 use crate::asm::inst;
 
@@ -31,6 +31,7 @@ pub const REGISTER_ID_NAMES: [&str; REGISTER_COUNT] = [
 
 pub const INST_LOAD_IMMEDIATE: &str = "li";
 pub const INST_RETURN: &str = "ret";
+pub const INST_CALL: &str = "call";
 pub const INST_MOVE: &str = "mv";
 pub const INST_LOAD_WORD: &str = "lw";
 pub const INST_STORE_WORD: &str = "sw";
@@ -55,6 +56,7 @@ pub type RV32Usize = u32;
 pub type RV32Isize = i32;
 
 pub const STACK_ALIGNMENT: RV32Usize = 16;
+pub const PTR_SIZE: RV32Usize = 4;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RV32Imm(i32);
@@ -351,20 +353,21 @@ impl RegisterMapper {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct StackSizeAllocator {
+pub struct StackSizeCalculator {
+    // To count the stack size, but not actually allocate it until the prologue.
     size: RV32Usize,
     aligned_size: RV32Usize,
 }
 
-impl Default for StackSizeAllocator {
+impl Default for StackSizeCalculator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StackSizeAllocator {
+impl StackSizeCalculator {
     pub fn new() -> Self {
-        StackSizeAllocator {
+        Self {
             size: 0,
             aligned_size: 0,
         }
@@ -392,6 +395,11 @@ impl StackSizeAllocator {
     pub fn is_aligned(&self) -> bool {
         self.size() == self.stack_size()
     }
+
+    pub fn clear(&mut self) {
+        self.size = 0;
+        self.aligned_size = 0;
+    }
 }
 
 /// Stack:
@@ -415,12 +423,13 @@ impl StackSizeAllocator {
 /// |                     | Low address
 /// ```
 ///
-/// 我们暂时将map中的值视为相对于sp的偏移量。
+/// Values in the map are the offset from the stack pointer, and the offset is determined when
+/// claiming the stack for the value. So the offsets will not change after claiming, and we can
+/// safely get the offset of a value in the stack after claiming.
 #[derive(Debug, Clone)]
-pub struct MemoryMapper {
-    // To count the stack size, but not actually allocate it until the prologue.
-    stack_size: StackSizeAllocator,
-    // Map from Value to its offset in the stack. See the comment above for details.
+pub struct StackSizeAllocator {
+    calculator: StackSizeCalculator,
+    // Map from Value to its offset in the stack.
     map: HashMap<Value, RV32Usize>,
     // Size of the stack that has been claimed by values. This is used to determine the offset of a
     // memory when claiming.
@@ -428,75 +437,72 @@ pub struct MemoryMapper {
     // Actual size of the stack that has been allocated. This should be done by modifying the stack
     // pointer in the prologue.
     allocated: RV32Usize,
+    // For meta data, e.g. return address
+    meta_size: RV32Usize,
 }
 
-impl Default for MemoryMapper {
+impl Default for StackSizeAllocator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MemoryMapper {
+impl StackSizeAllocator {
     pub fn new() -> Self {
-        MemoryMapper {
-            stack_size: StackSizeAllocator::new(),
+        StackSizeAllocator {
+            calculator: StackSizeCalculator::new(),
             map: HashMap::new(),
             claimed: 0,
             allocated: 0,
+            meta_size: 0,
         }
     }
 
-    pub fn allocate(&mut self, size: RV32Usize) {
-        let grow = self.stack_size.allocate(size);
-        if grow > 0 {
-            for entry in self.map.iter_mut() {
-                *entry.1 += grow;
-            }
-        }
+    pub fn set_meta_size(&mut self, size: RV32Usize) {
+        self.meta_size = size;
     }
 
-    pub fn claim(&mut self, value: Value, size: RV32Usize) {
-        if !self.map.contains_key(&value) {
-            if self.claimed + size > self.size() {
-                panic!(
-                    "Claiming value {:?} with size {} exceeds allocated stack size {}",
-                    value,
-                    size,
-                    self.size()
-                );
-            }
-            self.map.insert(value, self.claimed);
-            self.claimed += size;
-        } else {
-            panic!("Value already claimed in memory mapper: {:?}", value);
+    pub fn reserve(&mut self, size: RV32Usize) -> RV32Usize {
+        if self.allocated > 0 {
+            panic!("Cannot reserve stack size after stack has been allocated");
         }
+        self.calculator.allocate(size)
     }
 
-    pub fn alloc_size(&self) -> RV32Usize {
-        self.stack_size.stack_size()
+    pub fn reserved_size(&self) -> RV32Usize {
+        self.calculator.size()
+    }
+
+    pub fn calculated_size(&self) -> RV32Usize {
+        self.calculator.stack_size()
     }
 
     pub fn size(&self) -> RV32Usize {
-        self.stack_size.size()
+        self.allocated
     }
 
-    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<RV32Usize> {
-        self.map.get(value).copied().inspect(|&offset| {
-            if offset + size > self.size() {
-                panic!(
-                    "Offset {} and the size for value {:?} exceeds claimed stack size {}",
-                    offset,
-                    value,
-                    self.size()
-                );
-            }
-        })
+    pub fn is_aligned(&self) -> bool {
+        self.calculator.is_aligned()
     }
 
+    /// Never extend the stack after mapping values, otherwise the offsets will be wrong. This
+    /// function should only be called in the prologue or before the function call.
     pub fn extend_stack(&mut self) -> Vec<RiscvAsm> {
         let mut asms = vec![];
-        if self.alloc_size() > self.allocated {
-            let size = self.alloc_size() - self.allocated;
+        // Never re-extend
+        if self.allocated > 0 {
+            panic!("Cannot extend stack after stack has been allocated");
+        }
+        if self.meta_size > self.calculator.size() {
+            panic!(
+                "Meta size {} exceeds reserved stack size {}",
+                self.meta_size,
+                self.calculator.size()
+            );
+        }
+        // Aligned
+        if self.calculated_size() > self.allocated {
+            let size = self.calculated_size() - self.allocated;
             if size > i32::MAX as RV32Usize {
                 panic!("Stack size exceeds i32::MAX: {}", size);
             }
@@ -522,6 +528,8 @@ impl MemoryMapper {
         asms
     }
 
+    /// A helper function to pop the stack in the epilogue. This should only be called in the
+    /// epilogue or after the function call.
     pub fn resume_stack(&mut self) -> Vec<RiscvAsm> {
         let mut asms = vec![];
         if self.allocated > 0 {
@@ -542,9 +550,371 @@ impl MemoryMapper {
                     None,
                 ));
             }
-            self.allocated = 0;
         }
         asms
+    }
+
+    /// [`StackSizeAllocator::claim`] helps to register the offset of a value in the stack. The
+    /// offset is determined when claiming, and will not change.
+    pub fn claim(&mut self, value: Value, size: RV32Usize) {
+        if !self.map.contains_key(&value) {
+            if self.claimed + size + self.meta_size() > self.size() {
+                panic!(
+                    "Claiming value {:?} with size {} exceeds allocated stack size {}",
+                    value,
+                    size,
+                    self.size()
+                );
+            }
+            self.map.insert(value, self.claimed);
+            self.claimed += size;
+        } else {
+            panic!("Value already claimed in memory mapper: {:?}", value);
+        }
+    }
+
+    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<RV32Usize> {
+        self.map.get(value).copied().inspect(|&offset| {
+            if offset + size + self.meta_size > self.size() {
+                panic!(
+                    "Offset {} and the size for value {:?} exceeds claimed stack size {} (with meta size {})",
+                    offset,
+                    value,
+                    self.size(),
+                    self.meta_size(),
+                );
+            }
+        })
+    }
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.calculator.clear();
+        self.allocated = 0;
+        self.claimed = 0;
+    }
+
+    pub fn meta_size(&self) -> RV32Usize {
+        self.meta_size
+    }
+}
+
+/// [`FuncArgManager`] will NOT manage the stack for function arguments. It only manages the
+/// offsets for the function arguments in the stack, and the caller is responsible for managing the
+/// stack for function arguments.
+///
+/// So it is necessary to register the function arguments in the [`FuncArgManager`] before getting
+/// the offset of the function arguments. And the function arguments should be registered in order.
+/// Panic will be raised if the function arguments are not registered in order, e.g. parameter 0 is
+/// registered after parameter 1.
+#[derive(Debug, Clone)]
+pub struct FuncArgManager {
+    function_args: HashMap<usize, RV32Usize>,
+    size: RV32Usize,
+    arg_count: usize,
+}
+
+impl Default for FuncArgManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FuncArgManager {
+    pub fn new() -> Self {
+        FuncArgManager {
+            function_args: HashMap::new(),
+            size: 0,
+            arg_count: 0,
+        }
+    }
+
+    /// Register the function argument with its index and size, so that we can calculate the offset
+    /// of the function argument in the stack. The function arguments MUST be registered in order,
+    /// e.g. parameter 0 should be registered before parameter 1. Panic will be raised if not.
+    ///
+    /// Typically, you may call [`MemoryMapper::register_func_arg`].
+    pub fn insert(&mut self, arg_ref: &FuncArgRef, size: RV32Usize) {
+        let idx = arg_ref.index();
+        if self.function_args.contains_key(&idx) {
+            panic!(
+                "Function argument {:?} already exists in function argument manager",
+                arg_ref
+            );
+        }
+        if self.arg_count != idx {
+            panic!(
+                "Function argument index {} is not inserted in order, expected {}",
+                idx, self.arg_count
+            );
+        }
+        if idx < 8 {
+            self.arg_count += 1;
+            return;
+        }
+        self.function_args.insert(idx, self.size);
+        self.size += size;
+        self.arg_count += 1;
+    }
+
+    /// Get the offset of the function argument in the stack. The function arguments MUST be
+    /// registered.
+    pub fn get_offset(&self, arg_ref: &FuncArgRef, size: RV32Usize) -> Option<RV32Usize> {
+        let idx = arg_ref.index();
+        if idx < 8 {
+            None
+        } else {
+            self.function_args.get(&idx).copied().inspect(|&offset| {
+                if offset + size > self.size {
+                    panic!(
+                        "Offset {} and the size for function argument {:?} exceeds total function argument size {}",
+                        offset,
+                        arg_ref,
+                        self.size
+                    );
+                }
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ArgLocation {
+    Register(Register),
+    Stack(RV32Usize),
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryMapper {
+    /// `stack_allocator` only helps us to manage the stack for the current function call. We can
+    /// use it to manage the stack for local variables and saved registers in the current function.
+    ///
+    /// To build a stack for function calls, we need to use the `caller_stack` field. It contains
+    /// the params for the called function, and registers to be saved and restored for the caller
+    /// function.
+    stack_allocator: StackSizeAllocator,
+
+    /// The [`StackSizeAllocator`] itself should be a stack because when we try to pass the result
+    /// of a function (say f()) as the parameter of another function (say g()), we need to reserve
+    /// the stack for g() in f() before calling g().
+    ///
+    /// ```text
+    /// +---------------------+ High address
+    /// |   Caller function   |
+    /// +---------------------+
+    /// |  Arguments for g()  |
+    /// +---------------------+
+    /// |     Stack of g()    |
+    /// +---------------------+
+    /// |  Arguments for f()  |
+    /// +---------------------+
+    /// |     Stack of f()    |
+    /// +---------------------+
+    /// |                     | Low address
+    /// ```
+    ///
+    /// The [`StackSizeAllocator`] helps us to manage the stack for every function call. And [`Vec`]
+    /// helps us to manage the nested function calls.
+    ///
+    /// Note that `caller_stack` is not responsible for manage the stack for the function being
+    /// called. Funtions should manage it with their own `stack_allocator`.
+    caller_stack: Vec<StackSizeAllocator>,
+
+    /// For every single function, [`MemoryMapper`] is not responsible for the arguments in the
+    /// stack. So it is important to register the function arguments in the [`FuncArgManager`]
+    /// before getting the offset of the function arguments.
+    function_args: FuncArgManager,
+}
+
+impl Default for MemoryMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemoryMapper {
+    pub fn new() -> Self {
+        MemoryMapper {
+            stack_allocator: StackSizeAllocator::new(),
+            caller_stack: Vec::new(),
+            function_args: FuncArgManager::new(),
+        }
+    }
+
+    pub fn stack_reserve(&mut self, size: RV32Usize) {
+        self.stack_allocator.reserve(size);
+    }
+
+    pub fn function_reserve(&mut self, size: RV32Usize) {
+        self.caller_stack
+            .last_mut()
+            .expect("Caller stack should not be empty when reserving function stack")
+            .reserve(size);
+    }
+
+    pub fn stack_claim(&mut self, value: Value, size: RV32Usize) {
+        self.stack_allocator.claim(value, size);
+    }
+
+    pub fn function_claim(&mut self, value: Value, size: RV32Usize) {
+        self.caller_stack
+            .last_mut()
+            .expect("Caller stack should not be empty when claiming function stack")
+            .claim(value, size);
+    }
+
+    pub fn stack_alloc_size(&self) -> RV32Usize {
+        self.stack_allocator.size()
+    }
+
+    pub fn stack_calculated_size(&self) -> RV32Usize {
+        self.stack_allocator.calculated_size()
+    }
+
+    pub fn function_alloc_size(&self) -> RV32Usize {
+        self.caller_stack
+            .iter()
+            .fold(0, |last, stack| last + stack.size())
+    }
+
+    pub fn function_calculated_size(&self) -> RV32Usize {
+        self.caller_stack
+            .iter()
+            .fold(0, |last, stack| last + stack.calculated_size())
+    }
+
+    pub fn alloc_size(&self) -> RV32Usize {
+        self.stack_alloc_size() + self.function_alloc_size()
+    }
+
+    pub fn calculated_size(&self) -> RV32Usize {
+        self.stack_calculated_size() + self.function_calculated_size()
+    }
+
+    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<RV32Usize> {
+        let mut offset = 0;
+        self.caller_stack
+            .iter()
+            .rev()
+            .find_map(|stack| {
+                let res = stack.get_offset(value, size).map(|off| off + offset);
+                offset += stack.size();
+                res
+            })
+            .or(self
+                .stack_allocator
+                .get_offset(value, size)
+                .map(|off| offset + off))
+    }
+
+    pub fn meta_offset(&self) -> RV32Usize {
+        let offset = self
+            .caller_stack
+            .iter()
+            .rev()
+            .fold(0, |last, stack| last + stack.size());
+        offset + self.stack_allocator.reserved_size() - self.stack_allocator.meta_size()
+    }
+
+    pub fn stack_extend(&mut self) -> Vec<RiscvAsm> {
+        assert!(
+            self.caller_stack.is_empty(),
+            "Caller stack should be empty when extending stack"
+        );
+        self.stack_allocator.extend_stack()
+    }
+
+    pub fn function_extend(&mut self) -> Vec<RiscvAsm> {
+        self.caller_stack
+            .last_mut()
+            .expect("Caller stack should not be empty when extending function stack")
+            .extend_stack()
+    }
+
+    pub fn stack_resume(&mut self) -> Vec<RiscvAsm> {
+        assert!(
+            self.caller_stack.is_empty(),
+            "Caller stack should be empty when resuming stack"
+        );
+        self.stack_allocator.resume_stack()
+    }
+
+    pub fn function_resume(&mut self) -> Vec<RiscvAsm> {
+        self.caller_stack
+            .last_mut()
+            .expect("Caller stack should not be empty when resuming function stack")
+            .resume_stack()
+    }
+
+    pub fn clear(&mut self) {
+        self.caller_stack.clear();
+        self.stack_allocator.clear();
+    }
+
+    pub fn function_clear(&mut self) {
+        if let Some(stack) = self.caller_stack.last_mut() {
+            stack.clear();
+        }
+    }
+
+    pub fn register_func_arg(&mut self, arg_ref: &FuncArgRef, size: RV32Usize) {
+        self.function_args.insert(arg_ref, size);
+    }
+
+    fn get_arg_register(&self, arg_ref: &FuncArgRef) -> Option<Register> {
+        let idx = arg_ref.index();
+        if idx < 8 {
+            Some(Register::from((Register::A0 as u8) + idx as u8))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_arg(&mut self, arg_ref: &FuncArgRef, size: RV32Usize) -> Option<ArgLocation> {
+        let idx = arg_ref.index();
+        if idx < 8 {
+            self.get_arg_register(arg_ref).map(ArgLocation::Register)
+        } else {
+            self.function_args
+                .get_offset(arg_ref, size)
+                .map(|offset| offset + self.alloc_size())
+                .map(ArgLocation::Stack)
+        }
+    }
+
+    pub fn new_function_call(&mut self) {
+        self.caller_stack.push(StackSizeAllocator::new());
+    }
+
+    pub fn end_function_call(&mut self) {
+        if self.caller_stack.pop().is_none() {
+            panic!("Caller stack should not be empty when ending function call");
+        }
+    }
+
+    pub fn set_meta_size(&mut self, size: RV32Usize) {
+        self.stack_allocator.set_meta_size(size);
+    }
+}
+
+pub struct CallGuard<'a> {
+    memory_mapper: &'a mut MemoryMapper,
+}
+
+impl CallGuard<'_> {
+    pub fn new(memory_mapper: &mut MemoryMapper) -> CallGuard<'_> {
+        memory_mapper.new_function_call();
+        CallGuard { memory_mapper }
+    }
+
+    pub fn inner(&mut self) -> &mut MemoryMapper {
+        self.memory_mapper
+    }
+}
+
+impl Drop for CallGuard<'_> {
+    fn drop(&mut self) {
+        self.memory_mapper.end_function_call();
     }
 }
 
@@ -575,6 +945,7 @@ impl BlockLabels {
 }
 
 pub struct FunctionContext<'a> {
+    pub program: &'a Program,
     pub func_data: &'a FunctionData,
     pub register_mapper: RegisterMapper,
     /// i32为偏移量
@@ -594,12 +965,17 @@ impl Debug for FunctionContext<'_> {
 }
 
 impl FunctionContext<'_> {
-    pub fn new<'a>(func_data: &'a FunctionData, id: NonZero<usize>) -> FunctionContext<'a> {
+    pub fn new<'a>(
+        program: &'a Program,
+        func_data: &'a FunctionData,
+        id: NonZero<usize>,
+    ) -> FunctionContext<'a> {
         let entry_id = func_data
             .layout()
             .entry_bb()
             .expect("FATAL: cannot generate asm for a function declaration.");
         FunctionContext {
+            program,
             func_data,
             register_mapper: RegisterMapper::new(),
             memory_mapper: MemoryMapper::new(),
@@ -637,6 +1013,9 @@ pub trait ToAsm {
 #[derive(Debug, Clone)]
 pub enum RiscvInstruction {
     Ret,
+    Call {
+        func: String,
+    },
     Li {
         dest: Register,
         imm: RV32Imm,
@@ -749,6 +1128,7 @@ impl Display for RiscvInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RiscvInstruction::Ret => write!(f, "{}{}", INDENT, INST_RETURN),
+            RiscvInstruction::Call { func } => write!(f, "{}{} {}", INDENT, INST_CALL, func),
             RiscvInstruction::Li { dest, imm } => {
                 write!(
                     f,
