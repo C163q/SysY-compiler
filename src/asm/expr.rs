@@ -12,6 +12,7 @@ use koopa::ir::{
 use crate::asm::func::build_call_stack_and_registers;
 use crate::asm::inst::InstContext;
 use crate::asm::meta::{RV32Imm, RV32Usize};
+use crate::asm::var;
 use crate::asm::{
     inst,
     meta::{FunctionContext, Register, RiscvAsm, ToAsm},
@@ -31,18 +32,8 @@ pub fn get_value_from_mem(
     context: &mut FunctionContext,
     asms: &mut Vec<RiscvAsm>,
 ) -> Option<Register> {
-    let offset = context.memory_mapper.get_offset(
-        &value,
-        context.func_data.dfg().value(value).ty().size() as u32,
-    )?;
-    let rd = obtain_caller_directly_usable_register(context);
-    asms.extend(inst::add_lw_instruction(
-        rd,
-        Register::Sp,
-        RV32Imm::new(offset as i32),
-        Some(InstContext::new(context, value)),
-        Some(rd),
-    ));
+    let (vec, rd) = var::load(value, context, Some(value)).ok()?;
+    asms.extend(vec);
     Some(rd)
 }
 
@@ -363,19 +354,10 @@ impl ToAsm for Binary {
         // For now, we always try to push the result to the stack and clear the bindings between
         // the result register and the value. This is because we haven't implemented register
         // allocation yet.
-        let tmp = obtain_caller_directly_usable_register(context);
-        let size = context.func_data.dfg().value(id).ty().size() as u32;
-        context.memory_mapper.stack_claim(id, size);
-        let offset = context.memory_mapper.get_offset(&id, size).expect(
-            "Error occurs when trying to allocate stack memory for binary operation result",
+        asms.extend(
+            var::store(rd, id, context, Some(id), true)
+                .expect("Error occurs when trying to store binary operation result to stack"),
         );
-        asms.extend(inst::add_sw_instruction(
-            rd,
-            Register::Sp,
-            RV32Imm::new(offset as i32),
-            Some(InstContext::new(context, id)),
-            Some(tmp),
-        ));
 
         // Erase the binding between the result register and the value, so that the register can be
         // reused
@@ -407,42 +389,19 @@ impl ToAsm for Alloc {
 
 impl ToAsm for Load {
     fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
-        let size = context.func_data.dfg().value(self.src()).ty().size() as u32;
         let mut asms = vec![];
-
-        let rd = obtain_caller_directly_usable_register(context);
-        let offset = context
-            .memory_mapper
-            .get_offset(&self.src(), size)
-            .expect("Error occurs when trying to get stack memory offset for loading value");
-
-        asms.extend(inst::add_lw_instruction(
-            rd,
-            Register::Sp,
-            RV32Imm::new(offset as i32),
-            Some(InstContext::new(context, id)),
-            Some(rd),
-        ));
-
-        let ld_size = context.func_data.dfg().value(id).ty().size() as u32;
-        context.memory_mapper.stack_claim(id, ld_size);
-        let offset = context
-            .memory_mapper
-            .get_offset(&id, ld_size)
-            .expect("Error occurs when trying to allocate stack memory for load result");
+        let (vec, rd) = var::load(self.src(), context, None)
+            .expect("Error occurs when trying to load value for load instruction");
+        asms.extend(vec);
 
         // load IR return value into rd, and then store it to the stack.
         //
         // To get value directly from the stack and not be pushed to the stack, get_value() should
         // be used instead of Load instruction.
-        let tmp = obtain_caller_directly_usable_register(context);
-        asms.extend(inst::add_sw_instruction(
-            rd,
-            Register::Sp,
-            RV32Imm::new(offset as i32),
-            Some(InstContext::new(context, id)),
-            Some(tmp),
-        ));
+        asms.extend(
+            var::store(rd, id, context, Some(id), true)
+                .expect("Error occurs when trying to store load result to stack"),
+        );
 
         context.register_mapper.clear();
 
@@ -452,26 +411,17 @@ impl ToAsm for Load {
 
 impl ToAsm for Store {
     fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
-        let size = context.func_data.dfg().value(self.dest()).ty().size() as u32;
         let mut asms = vec![];
 
         let rd = *get_value(self.value(), context, &mut asms)
             .iter()
             .next()
             .expect("No register assigned for store value");
-        let tmp = obtain_caller_directly_usable_register(context);
-        let offset = context
-            .memory_mapper
-            .get_offset(&self.dest(), size)
-            .expect("Error occurs when trying to get stack memory offset for storing value");
 
-        asms.extend(inst::add_sw_instruction(
-            rd,
-            Register::Sp,
-            RV32Imm::new(offset as i32),
-            Some(InstContext::new(context, id)),
-            Some(tmp),
-        ));
+        asms.extend(
+            var::store(rd, self.dest(), context, Some(id), false)
+                .expect("Error occurs when trying to store value to destination"),
+        );
 
         // Only clear the binding between the stored value and the register.
         context.register_mapper.remove(self.value(), rd);
@@ -528,22 +478,10 @@ impl ToAsm for Call {
         context.memory_mapper.end_function_call();
 
         if !ret_ty.is_unit() {
-            let tmp = obtain_caller_directly_usable_register(context);
-            context
-                .memory_mapper
-                .stack_claim(id, ret_ty.size() as RV32Usize);
-            let offset = context
-                .memory_mapper
-                .get_offset(&id, ret_ty.size() as RV32Usize)
-                .expect("Error occurs when trying to get stack memory offset for storing value");
-
-            asms.extend(inst::add_sw_instruction(
-                Register::A0,
-                Register::Sp,
-                RV32Imm::new(offset as i32),
-                Some(InstContext::new(context, id)),
-                Some(tmp),
-            ));
+            asms.extend(
+                var::store(Register::A0, id, context, Some(id), true)
+                    .expect("Error occurs when trying to store return value to stack"),
+            );
         }
 
         asms

@@ -7,10 +7,14 @@ pub mod expr;
 pub mod func;
 pub mod inst;
 pub mod meta;
+pub mod var;
 
 pub fn generate_instruction(program: &Program) -> Vec<RiscvAsm> {
-    let mut instructions = vec![RiscvAsm::Section(meta::TEXT_SECTION.to_string())];
-    instructions.extend(func::register_global_func(program));
+    let mut instructions = vec![];
+    instructions.push(RiscvAsm::Section(meta::DATA_SECTION.to_string()));
+    instructions.extend(var::register_global_var(program));
+
+    instructions.push(RiscvAsm::Section(meta::TEXT_SECTION.to_string()));
     instructions.extend(func::generate_funcs(program));
 
     instructions

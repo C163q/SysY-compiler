@@ -5,36 +5,69 @@ use koopa::ir::Type;
 #[derive(Debug, Clone)]
 pub struct CompUnit {
     pub comp_unit: Option<Box<CompUnit>>,
-    pub func_def: FuncDef,
+    pub item: GlobalItem,
 }
 
 /// 文法标识符
 impl CompUnit {
-    pub fn new(comp_unit: Option<CompUnit>, func_def: FuncDef) -> Self {
+    pub fn new(comp_unit: Option<CompUnit>, item: GlobalItem) -> Self {
         Self {
             comp_unit: comp_unit.map(Box::new),
-            func_def,
+            item,
         }
+    }
+
+    pub fn new_func(comp_unit: Option<CompUnit>, func_def: FuncDef) -> Self {
+        Self::new(comp_unit, GlobalItem::new_func_def(func_def))
+    }
+
+    pub fn new_decl(comp_unit: Option<CompUnit>, decl: Decl) -> Self {
+        Self::new(comp_unit, GlobalItem::new_decl(decl))
     }
 }
 
 impl Display for CompUnit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.func_def)
+        write!(f, "{}", self.item)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum GlobalItem {
+    FuncDef(FuncDef),
+    Decl(Decl),
+}
+
+impl GlobalItem {
+    pub fn new_func_def(func_def: FuncDef) -> Self {
+        Self::FuncDef(func_def)
+    }
+
+    pub fn new_decl(decl: Decl) -> Self {
+        Self::Decl(decl)
+    }
+}
+
+impl Display for GlobalItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GlobalItem::FuncDef(func_def) => write!(f, "{}", func_def),
+            GlobalItem::Decl(decl) => write!(f, "{}", decl),
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Components {
-    pub list: Vec<FuncDef>,
+    pub list: Vec<GlobalItem>,
 }
 
 impl Components {
     pub fn new(unit: CompUnit) -> Self {
-        let mut defs = vec![unit.func_def];
+        let mut defs = vec![unit.item];
         let mut maybe_unit = unit.comp_unit;
         while let Some(unit) = maybe_unit {
-            defs.push(unit.func_def);
+            defs.push(unit.item);
             maybe_unit = unit.comp_unit;
         }
         defs.reverse();

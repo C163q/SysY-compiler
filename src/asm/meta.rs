@@ -3,7 +3,6 @@ use std::{
     fmt::{self, Debug, Display},
     mem,
     num::NonZero,
-    ops::{Deref, DerefMut},
 };
 
 use koopa::ir::{BasicBlock, FunctionData, Program, Value, values::FuncArgRef};
@@ -13,8 +12,14 @@ use crate::asm::inst;
 pub const INDENT: &str = "  ";
 
 pub const TEXT_SECTION: &str = ".text";
+pub const DATA_SECTION: &str = ".data";
 
 pub const GLOBAL_SYMBOL: &str = ".globl";
+pub const ZERO_INIT: &str = ".zero";
+pub const INIT_WORD: &str = ".word";
+
+pub const LOWER_12_BIT: &str = "%lo";
+pub const UPPER_20_BIT: &str = "%hi";
 
 pub const REGISTER_COUNT: usize = 32;
 pub const REGISTER_ABI_NAMES: [&str; REGISTER_COUNT] = [
@@ -30,9 +35,11 @@ pub const REGISTER_ID_NAMES: [&str; REGISTER_COUNT] = [
 ];
 
 pub const INST_LOAD_IMMEDIATE: &str = "li";
+pub const INST_LOAD_UPPER_IMMEDIATE: &str = "lui";
 pub const INST_RETURN: &str = "ret";
 pub const INST_CALL: &str = "call";
 pub const INST_MOVE: &str = "mv";
+pub const INST_LOAD_ADDRESS: &str = "la";
 pub const INST_LOAD_WORD: &str = "lw";
 pub const INST_STORE_WORD: &str = "sw";
 pub const INST_ADDITION: &str = "add";
@@ -58,77 +65,89 @@ pub type RV32Isize = i32;
 pub const STACK_ALIGNMENT: RV32Usize = 16;
 pub const PTR_SIZE: RV32Usize = 4;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RV32Imm(i32);
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RV32Imm {
+    Num(i32),
+    Label(String),
+}
 
 impl RV32Imm {
     pub fn new(value: i32) -> Self {
-        RV32Imm(value)
+        RV32Imm::Num(value)
+    }
+
+    pub fn new_label(label: String) -> Self {
+        RV32Imm::Label(label)
     }
 
     pub fn value(&self) -> i32 {
-        self.0
+        match self {
+            RV32Imm::Num(val) => *val,
+            RV32Imm::Label(_) => panic!("Immediate value is a label, not a number"),
+        }
     }
 
     pub fn set_value(&mut self, value: i32) {
-        self.0 = value;
+        *self = RV32Imm::Num(value);
+    }
+
+    pub fn set_label(&mut self, label: String) {
+        *self = RV32Imm::Label(label);
     }
 }
 
 impl Display for RV32Imm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            RV32Imm::Num(val) => write!(f, "{}", val),
+            RV32Imm::Label(label) => write!(f, "{}", label),
+        }
     }
 }
 
-impl Deref for RV32Imm {
-    type Target = i32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RV32Imm12 {
+    Num(i16),
+    LabelLow(String),
 }
-
-impl DerefMut for RV32Imm {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RV32Imm12(i16);
 
 impl RV32Imm12 {
     pub fn new(value: i16) -> Self {
         if !(-2048..=2047).contains(&value) {
             panic!("Immediate value out of range for RV32I: {}", value);
         }
-        RV32Imm12(value)
+        RV32Imm12::Num(value)
     }
 
-    pub fn value(&self) -> i16 {
-        self.0
+    pub fn new_label(label: String) -> Self {
+        RV32Imm12::LabelLow(label)
     }
 
-    pub fn set_value(&mut self, value: i16) {
+    pub fn num(&self) -> i16 {
+        match self {
+            RV32Imm12::Num(val) => *val,
+            RV32Imm12::LabelLow(_) => panic!("Immediate value is a label, not a number"),
+        }
+    }
+
+    pub fn set_num(&mut self, value: i16) {
         if !(-2048..=2047).contains(&value) {
             panic!("Immediate value out of range for RV32I: {}", value);
         }
-        self.0 = value;
+        *self = RV32Imm12::Num(value);
+    }
+
+    pub fn set_label(&mut self, label: String) {
+        *self = RV32Imm12::LabelLow(label);
     }
 }
 
 impl Display for RV32Imm12 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Deref for RV32Imm12 {
-    type Target = i16;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        match self {
+            RV32Imm12::Num(val) => write!(f, "{}", val),
+            RV32Imm12::LabelLow(label) => write!(f, "{}({})", LOWER_12_BIT, label),
+        }
     }
 }
 
@@ -1020,9 +1039,17 @@ pub enum RiscvInstruction {
         dest: Register,
         imm: RV32Imm,
     },
+    Lui {
+        dest: Register,
+        imm: RV32Imm,
+    },
     Mv {
         dest: Register,
         src: Register,
+    },
+    La {
+        dest: Register,
+        label: String,
     },
     Lw {
         dest: Register,
@@ -1139,8 +1166,28 @@ impl Display for RiscvInstruction {
                     imm
                 )
             }
+            RiscvInstruction::Lui { dest, imm } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_LOAD_UPPER_IMMEDIATE,
+                    dest.name(),
+                    imm
+                )
+            }
             RiscvInstruction::Mv { dest, src } => {
                 write!(f, "{}{} {}, {}", INDENT, INST_MOVE, dest.name(), src.name())
+            }
+            RiscvInstruction::La { dest, label } => {
+                write!(
+                    f,
+                    "{}{} {}, {}",
+                    INDENT,
+                    INST_LOAD_ADDRESS,
+                    dest.name(),
+                    label
+                )
             }
             RiscvInstruction::Lw { dest, base, offset } => {
                 write!(
@@ -1253,10 +1300,26 @@ impl Display for RiscvInstruction {
 }
 
 #[derive(Debug, Clone)]
+pub enum RiscvInit {
+    Zero(RV32Usize),
+    Word(RV32Imm),
+}
+
+impl Display for RiscvInit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RiscvInit::Zero(size) => write!(f, "{}{} {}", INDENT, ZERO_INIT, size),
+            RiscvInit::Word(value) => write!(f, "{}{} {}", INDENT, INIT_WORD, value),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum RiscvAsm {
     Section(String),
     Global(String),
     Label(String),
+    Init(RiscvInit),
     Instruction(RiscvInstruction),
     None, // for formatting
 }
@@ -1267,6 +1330,7 @@ impl Display for RiscvAsm {
             RiscvAsm::Section(name) => write!(f, "{}{}", INDENT, name),
             RiscvAsm::Global(name) => write!(f, "{}.globl {}", INDENT, name),
             RiscvAsm::Label(name) => write!(f, "{}:", name),
+            RiscvAsm::Init(init) => write!(f, "{}", init),
             RiscvAsm::Instruction(inst) => write!(f, "{}", inst),
             RiscvAsm::None => Ok(()),
         }

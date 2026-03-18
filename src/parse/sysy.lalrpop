@@ -14,6 +14,7 @@ use crate::parse::ast::{
     VarDecl,
     VarDef,
     InitVal,
+    GlobalItem,
     BlockItem,
     LVal,
     Stmt,
@@ -52,8 +53,13 @@ match {
 }
 
 /// 开始符号为`CompUnit`。
-/// CompUnit ::= (CompUnit)? FuncDef;
-pub CompUnit: CompUnit = <CompUnit?> <FuncDef> => CompUnit::new(<>);
+/// CompUnit ::= (CompUnit)? (Decl | FuncDef);
+pub CompUnit: CompUnit = <CompUnit?> <GlobalItem> => CompUnit::new(<>);
+
+GlobalItem: GlobalItem = {
+    <Decl> => GlobalItem::new_decl(<>),
+    <FuncDef> => GlobalItem::new_func_def(<>),
+};
 
 /// FuncDef ::= BType IDENT "(" (FuncFParams)? ")" Block;
 FuncDef: FuncDef = {

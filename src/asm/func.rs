@@ -175,19 +175,14 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
     asms
 }
 
-pub fn register_global_func(program: &Program) -> Vec<RiscvAsm> {
-    let mut vec = vec![];
-    for &func in program.func_layout() {
-        let func_data = program.func(func);
-        vec.extend(register_func(func_data).into_iter());
-    }
-    vec
-}
-
 pub fn generate_funcs(program: &Program) -> Vec<RiscvAsm> {
     let mut vec = vec![];
     for (id, &func) in program.func_layout().iter().enumerate() {
         let func_data = program.func(func);
+        if func_data.layout().entry_bb().is_none() {
+            continue; // skip function declaration
+        }
+        vec.extend(register_func(func_data).into_iter());
         vec.extend(function_assembly(
             program,
             func_data,

@@ -16,7 +16,7 @@ impl InstContext<'_, '_> {
     }
 }
 
-fn register_dest(dest: Register, context: Option<InstContext>) {
+pub fn register_dest(dest: Register, context: Option<InstContext>) {
     if let Some(ctx) = context {
         ctx.context.register_mapper.remove_by_register(dest);
         ctx.context
@@ -50,6 +50,14 @@ pub fn li_instruction(dest: Register, imm: i32, context: Option<InstContext>) ->
 pub fn mv_instruction(dest: Register, src: Register, context: Option<InstContext>) -> RiscvAsm {
     register_dest(dest, context);
     RiscvAsm::Instruction(RiscvInstruction::Mv { dest, src })
+}
+
+pub fn la_instruction(dest: Register, label: &str, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::La {
+        dest,
+        label: label.to_string(),
+    })
 }
 
 macro_rules! binary_instruction {
@@ -228,4 +236,31 @@ pub fn add_sw_instruction(
         return asms;
     }
     vec![sw_instruction(src, base, offset.value() as i16, context)]
+}
+
+pub fn label_sw_instruction(
+    src: Register,
+    label: &str,
+    _context: Option<InstContext>,
+    rd: Option<Register>,
+) -> Vec<RiscvAsm> {
+    let mut asms = vec![];
+    match rd {
+        Some(rd) => {
+            asms.push(la_instruction(rd, label, None));
+            asms.push(sw_instruction(src, rd, 0, None));
+        }
+        None => {
+            panic!(
+                "No temporary register provided for label_sw_instruction with label {}",
+                label
+            );
+        }
+    }
+    asms
+}
+
+pub fn lui_instruction(dest: Register, imm: RV32Imm, context: Option<InstContext>) -> RiscvAsm {
+    register_dest(dest, context);
+    RiscvAsm::Instruction(RiscvInstruction::Lui { dest, imm })
 }

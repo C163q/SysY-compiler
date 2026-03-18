@@ -1,6 +1,6 @@
 use koopa::ir::{
-    BasicBlock, Function, FunctionData, Program, Type, ValueKind,
-    builder::{BasicBlockBuilder, LocalInstBuilder},
+    BasicBlock, Function, FunctionData, Program, Type, TypeKind, ValueKind,
+    builder::{BasicBlockBuilder, GlobalInstBuilder, LocalInstBuilder, ValueBuilder},
     dfg::DataFlowGraph,
 };
 
@@ -141,6 +141,12 @@ impl IntoIr for ast::ConstDecl {
         manager: &mut VariableManager,
         _flows: &mut Vec<BlockFlow>,
     ) {
+        self.define_const(manager);
+    }
+}
+
+impl ast::ConstDecl {
+    pub fn define_const(self, manager: &mut VariableManager) {
         let ty = self.ty;
         let defs = self.def;
         for def in defs {
@@ -424,6 +430,45 @@ impl IntoIr for ast::Block {
     }
 }
 
+impl ast::GlobalItem {
+    pub fn generate_ir(self, program: &mut Program, manager: &mut VariableManager) {
+        match self {
+            ast::GlobalItem::FuncDef(func_def) => {
+                let func = func_def.register_func(program, manager);
+                func_def.generate_ir(program.func_mut(func), manager);
+            }
+            ast::GlobalItem::Decl(decl) => match decl {
+                ast::Decl::Const(decl) => decl.define_const(manager),
+                ast::Decl::Var(decl) => {
+                    let defs = decl.def;
+                    for def in defs {
+                        let ty: Type = decl.ty.into();
+                        let init = match def.init_val {
+                            None => program.new_value().zero_init(ty.clone()),
+                            Some(init) => match ty.kind() {
+                                TypeKind::Int32 => {
+                                    program
+                                        .new_value()
+                                        .integer(init.expr.const_eval_i32(manager)
+                                        .expect("Initialization value for global variable must be a constant expression"))
+                                }
+                                TypeKind::Unit => panic!("Void type cannot be used for global variable '{}'", def.ident),
+                                TypeKind::Function(_, _) => panic!("Function type cannot be used for global variable '{}'", def.ident),
+                                _ => unimplemented!("Unsupported type for global variable '{}'", def.ident),
+                            }
+                        };
+                        let global = program.new_value().global_alloc(init);
+                        program.set_value_name(global, Some(format!("@{}", def.ident)));
+                        manager
+                            .define_var(def.ident, global, ty)
+                            .unwrap_or_else(|e| panic!("Error defining global variable: {}", e));
+                    }
+                }
+            },
+        }
+    }
+}
+
 fn bind_if_else(
     else_branch: Box<ast::ElseBranch>,
     stmt: ast::Stmt,
@@ -656,12 +701,36 @@ fn func_scope(
             .collect::<Vec<_>>();
     }
 
-    if flows.last().is_none() {
+    match flows.last_mut() {
         // void f() {}
-        flows.push(BlockFlow::new(
-            dfg.new_bb().basic_block(Some("%entry".to_string())),
-            vec![Instruction::new(dfg.new_value().ret(None), true)],
-        ));
+        None => {
+            flows.push(BlockFlow::new(
+                dfg.new_bb().basic_block(Some("%entry".to_string())),
+                vec![Instruction::new(dfg.new_value().ret(None), true)],
+            ));
+        }
+        Some(flow) => {
+            let last = flow
+                .insts
+                .last()
+                .expect("Basic block should have at least one instruction");
+            match dfg.value(*last.inst()).kind() {
+                ValueKind::Return(_) => {}
+                ValueKind::Branch(_) | ValueKind::Jump(_) => {
+                    flows.push(BlockFlow::new(
+                        dfg.new_bb().basic_block(None),
+                        vec![Instruction::new(dfg.new_value().ret(None), true)],
+                    ));
+                }
+                _ => {
+                    // void f() {
+                    //   do_something();
+                    // }
+                    flow.insts
+                        .push(Instruction::new(dfg.new_value().ret(None), true));
+                }
+            }
+        }
     }
 
     flows
