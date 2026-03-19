@@ -50,9 +50,37 @@ ld.lld hello.o -L/path/to/libsysy/dir -lsysy -o hello
 qemu-riscv32-static hello
 ```
 
-其中 `libsysy` 库来自于[外部仓库](https://gitlab.eduxiji.net/csc1/nscscc/compiler2021/-/tree/master/%E5%85%AC%E5%BC%80%E7%94%A8%E4%BE%8B%E4%B8%8E%E8%BF%90%E8%A1%8C%E6%97%B6%E5%BA%93)
-的 `libsysy.a` 或 `libsysy.so` 文件。
+其中 `libsysy` 库来自于[外部仓库](https://github.com/pku-minic/sysy-runtime-lib)。
 
 `/path/to/libsysy/dir` 应当是存放 `libsysy.a` 或 `libsysy.so` 的目录。
 
 使用 `qemu` 来模拟 `riscv32` 架构运行程序。
+
+## 功能
+
+- [x] `main`函数与`return`语句
+- [x] 表达式
+  - [x] 一元表达式
+  - [x] 算术表达式
+  - [x] 比较和逻辑表达式
+- [x] 常量和变量
+  - [x] 常量
+  - [x] 栈帧
+  - [x] 变量和赋值
+- [x] 语句块和作用域
+- [x] `if`语句
+  - [x] `if-else`语句
+  - [x] 短路求值
+- [x] `while`语句
+  - [x] `while`
+  - [x] `break`和`continue`
+- [x] 函数和全局变量
+  - [x] 函数定义和调用
+  - [x] 库函数
+  - [x] 全局变量和常量
+- [x] 数组
+  - [ ] 一维数组
+  - [ ] 多维数组
+  - [ ] 数组参数
+- [ ] 寄存器分配
+- [ ] 优化
