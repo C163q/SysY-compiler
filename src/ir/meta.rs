@@ -2,7 +2,24 @@ use std::collections::HashMap;
 
 use koopa::ir::{BasicBlock, Function, Type, Value, dfg::DataFlowGraph};
 
-use crate::ir::func::BlockFlow;
+pub struct BlockFlow {
+    pub block: BasicBlock,
+    pub insts: Vec<Instruction>,
+}
+
+impl BlockFlow {
+    pub fn new(block: BasicBlock, insts: Vec<Instruction>) -> Self {
+        Self { block, insts }
+    }
+
+    pub fn block(&self) -> &BasicBlock {
+        &self.block
+    }
+
+    pub fn values(&self) -> &[Instruction] {
+        &self.insts
+    }
+}
 
 pub fn last_flow(flows: &mut [BlockFlow]) -> &mut BlockFlow {
     flows.last_mut().expect("FATAL: Basic block is needed.")
@@ -58,6 +75,9 @@ impl Instruction {
 #[derive(Debug, Clone)]
 pub enum ConstValue {
     Int(i32),
+    /// Const evaluation of array literals is not supported, but we still want to represent them as
+    /// constants in the IR.
+    Array(Value),
     Function(Function),
 }
 

@@ -99,11 +99,27 @@ BType: BType = {
     "void" => BType::Void,
 }
 
-/// ConstDef ::= IDENT "=" ConstInitVal;
-ConstDef: ConstDef = <Ident> "=" <ConstInitVal> => ConstDef::new(<>);
+/// ConstDef ::= IDENT ( "[" ConstExp "]" )? "=" ConstInitVal;
+ConstDef: ConstDef = {
+    <Ident> "=" <ConstInitVal> => ConstDef::new_ident(<>),
+    <Ident> "[" <ConstExp> "]" "=" <ConstInitVal> => ConstDef::new_array(<>),
+}
 
-/// ConstInitVal ::= ConstExp;
-ConstInitVal: ConstInitVal = <ConstExp> => ConstInitVal::new(<>);
+ConstInitValArray: Vec<ConstExpr> = {
+    <exp:ConstExp> <exps:("," <ConstExp>)*> => {
+        let mut vec = vec![exp];
+        vec.extend(exps);
+        vec
+    }
+}
+
+/// ConstInitVal ::= ConstExp | "{" (ConstExp ("," ConstExp)*)? "}";
+ConstInitVal: ConstInitVal = {
+    <ConstExp> => ConstInitVal::new_expr(<>),
+    "{" <maybe_array:ConstInitValArray?> "}" => {
+        ConstInitVal::new_array(maybe_array.unwrap_or_else(Vec::new))
+    }
+}
 
 /// VarDecl ::= BType VarDef ("," VarDef)* ";";
 VarDecl: VarDecl = {
@@ -114,14 +130,29 @@ VarDecl: VarDecl = {
     }
 }
 
-/// VarDef ::= IDENT | IDENT "=" InitVal;
+/// VarDef ::= IDENT ("[" ConstExp "]")? | IDENT ("[" ConstExp "]")? "=" InitVal;
 VarDef: VarDef = {
-    <ident:Ident> => VarDef::new(ident, None),
-    <ident:Ident> "=" <init:InitVal> => VarDef::new(ident, Some(init)),
+    <ident:Ident> => VarDef::new_ident(ident, None),
+    <ident:Ident> "[" <exp:ConstExp> "]" => VarDef::new_array(ident, exp, None),
+    <ident:Ident> "=" <init:InitVal> => VarDef::new_ident(ident, Some(init)),
+    <ident:Ident> "[" <exp:ConstExp> "]" "=" <init:InitVal> => {
+        VarDef::new_array(ident, exp, Some(init))
+    }
 }
 
-/// InitVal ::= Exp;
-InitVal: InitVal = <Exp> => InitVal::new(<>);
+InitValArray: Vec<Expr> = {
+    <exp:Exp> <exps:("," <Exp>)*> => {
+        let mut vec = vec![exp];
+        vec.extend(exps);
+        vec
+    }
+}
+
+/// InitVal ::= Exp | "{" (Exp ("," Exp)*)? "}";
+InitVal: InitVal = {
+    <Exp> => InitVal::new_expr(<>),
+    "{" <maybe_array:InitValArray?> "}" => InitVal::new_array(maybe_array.unwrap_or_else(Vec::new)),
+}
 
 /// Block ::= "{" BlockItem* "}";
 Block: Block = "{" <items:(<BlockItem>)*> "}" => Block::new(items);
@@ -155,8 +186,11 @@ Stmt: Stmt = {
 /// Exp ::= AddExp;
 Exp: Expr = <LOrExp> => Expr::new(<>);
 
-/// LVal ::= IDENT;
-LVal: LVal = <Ident> => LVal::new(<>);
+/// LVal ::= IDENT ("[" Exp "]")?;
+LVal: LVal = {
+    <Ident> => LVal::new_ident(<>),
+    <Ident> "[" <Exp> "]" => LVal::new_array(<>),
+}
 
 /// PrimaryExp ::= "(" Exp ")" | Number;
 PrimaryExp: PrimaryExpr = {

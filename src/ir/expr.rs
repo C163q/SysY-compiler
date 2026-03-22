@@ -5,9 +5,8 @@ use koopa::ir::{
 };
 
 use crate::{
-    ir::{
-        func::BlockFlow,
-        meta::{ConstValue, Instruction, IntoIr, Variable, VariableManager, last_inst_vec},
+    ir::meta::{
+        BlockFlow, ConstValue, Instruction, IntoIr, Variable, VariableManager, last_inst_vec,
     },
     parse::ast::{self, EqExpr},
 };
@@ -169,7 +168,7 @@ impl IntoIr for ast::LAndExpr {
                         ast::RelExpr::new_num(ast::Number::new(0)),
                     )),
                     ast::Stmt::Assign(
-                        ast::LVal::new(tmp_name.clone()),
+                        ast::LVal::new_ident(tmp_name.clone()),
                         ast::Expr::new_eq(ast::EqExpr::new_binary(
                             *rhs,
                             ast::EqOp::NotEq,
@@ -235,7 +234,7 @@ impl IntoIr for ast::LOrExpr {
                         ast::RelExpr::new_num(ast::Number::new(0)),
                     )),
                     ast::Stmt::Assign(
-                        ast::LVal::new(tmp_name.clone()),
+                        ast::LVal::new_ident(tmp_name.clone()),
                         ast::Expr::new_eq(ast::EqExpr::new_binary(
                             ast::EqExpr::new_expr(ast::Expr::new_land(*rhs)),
                             ast::EqOp::NotEq,
@@ -362,7 +361,9 @@ impl IntoIr for ast::FuncCall {
         {
             Variable::Var(_) => panic!("'{}' is not a function", self.ident),
             Variable::Const(val) => match val {
-                ConstValue::Int(_) => panic!("'{}' is not a function", self.ident),
+                ConstValue::Int(_) | ConstValue::Array(_) => {
+                    panic!("'{}' is not a function", self.ident)
+                }
                 ConstValue::Function(func) => *func,
             },
         };
@@ -386,6 +387,77 @@ impl IntoIr for ast::FuncCall {
     }
 }
 
+fn ident_lval_ir(
+    ident: String,
+    dfg: &mut DataFlowGraph,
+    manager: &mut VariableManager,
+    flows: &mut [BlockFlow],
+) {
+    match manager.get(&ident) {
+        Some(var) => match var {
+            // 若为常量，直接取得其常量值且不产生对应IR。
+            Variable::Const(val) => match val {
+                ConstValue::Int(val) => last_inst_vec(flows)
+                    .push(Instruction::new(dfg.new_value().integer(*val), false)),
+                ConstValue::Function(_) => {
+                    panic!("Function '{}' cannot be used as a value", ident)
+                }
+                ConstValue::Array(value) => {
+                    let load = dfg.new_value().load(*value);
+                    last_inst_vec(flows).push(Instruction::new(load, true))
+                }
+            },
+            // 若为变量，产生load指令来取得其值。
+            Variable::Var(var) => {
+                let load = dfg.new_value().load(*var.value());
+                last_inst_vec(flows).push(Instruction::new(load, true))
+            }
+        },
+        None => panic!("Variable '{}' not defined", ident),
+    }
+}
+
+fn array_lval_ir(
+    ident: String,
+    index: ast::Expr,
+    dfg: &mut DataFlowGraph,
+    manager: &mut VariableManager,
+    flows: &mut Vec<BlockFlow>,
+) {
+    index.into_ir(dfg, manager, flows);
+    let index_val = *last_inst_vec(flows)
+        .last()
+        .copied()
+        .expect("Array index expect a value")
+        .inst();
+    match manager.get(&ident) {
+        Some(var) => match var {
+            Variable::Const(val) => match val {
+                ConstValue::Int(_) | ConstValue::Function(_) => {
+                    panic!("'{}' is not an array", ident)
+                }
+                ConstValue::Array(value) => {
+                    let ptr = dfg.new_value().get_elem_ptr(*value, index_val);
+                    let load = dfg.new_value().load(ptr);
+                    last_inst_vec(flows).extend(vec![
+                        Instruction::new(ptr, true),
+                        Instruction::new(load, true),
+                    ])
+                }
+            },
+            Variable::Var(var) => {
+                let ptr = dfg.new_value().get_elem_ptr(*var.value(), index_val);
+                let load = dfg.new_value().load(ptr);
+                last_inst_vec(flows).extend(vec![
+                    Instruction::new(ptr, true),
+                    Instruction::new(load, true),
+                ])
+            }
+        },
+        None => panic!("Variable '{}' not defined", ident),
+    }
+}
+
 impl IntoIr for ast::LVal {
     fn into_ir(
         self,
@@ -393,53 +465,41 @@ impl IntoIr for ast::LVal {
         manager: &mut VariableManager,
         flows: &mut Vec<BlockFlow>,
     ) {
-        match manager.get(&self.ident) {
-            Some(var) => match var {
-                // 若为常量，直接取得其常量值且不产生对应IR。
-                Variable::Const(val) => match val {
-                    ConstValue::Int(val) => last_inst_vec(flows)
-                        .push(Instruction::new(dfg.new_value().integer(*val), false)),
-                    ConstValue::Function(_) => {
-                        panic!("Function '{}' cannot be used as a value", self.ident)
-                    }
-                },
-                // 若为变量，产生load指令来取得其值。
-                Variable::Var(var) => {
-                    let load = dfg.new_value().load(*var.value());
-                    last_inst_vec(flows).push(Instruction::new(load, true))
-                }
-            },
-            None => panic!("Variable '{}' not defined", self.ident),
+        match self {
+            ast::LVal::Ident(ident) => ident_lval_ir(ident, dfg, manager, flows),
+            ast::LVal::Array { ident, index } => array_lval_ir(ident, *index, dfg, manager, flows),
         }
     }
 
     fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
-        match manager.get(&self.ident) {
-            Some(var) => match var {
-                Variable::Const(val) => match val {
-                    ConstValue::Int(val) => Some(*val),
-                    ConstValue::Function(_) => None,
+        match self {
+            ast::LVal::Ident(ident) => match manager.get(ident) {
+                Some(var) => match var {
+                    Variable::Const(val) => match val {
+                        ConstValue::Int(val) => Some(*val),
+                        ConstValue::Function(_) | ConstValue::Array(_) => None,
+                    },
+                    // 变量不允许在编译期求值。
+                    Variable::Var(_) => None,
                 },
-                // 变量不允许在编译期求值。
-                Variable::Var(_) => None,
+                None => None,
             },
-            None => None,
+            // 不支持编译期求值数组元素
+            ast::LVal::Array { .. } => None,
         }
     }
 }
 
 impl IntoIr for ast::ConstInitVal {
-    fn into_ir(
-        self,
-        dfg: &mut DataFlowGraph,
-        manager: &mut VariableManager,
-        flows: &mut Vec<BlockFlow>,
-    ) {
-        self.expr.into_ir(dfg, manager, flows)
+    fn into_ir(self, _: &mut DataFlowGraph, _: &mut VariableManager, _: &mut Vec<BlockFlow>) {
+        panic!("ConstInitVal should not be handled here!");
     }
 
     fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
-        self.expr.const_eval_i32(manager)
+        match self {
+            ast::ConstInitVal::Expr(expr) => expr.const_eval_i32(manager),
+            ast::ConstInitVal::Array(_) => None,
+        }
     }
 }
 
@@ -455,6 +515,15 @@ impl IntoIr for ast::ConstExpr {
 
     fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
         self.expr.const_eval_i32(manager)
+    }
+}
+
+impl ast::ConstExpr {
+    pub fn eval_usize(&self, manager: &VariableManager) -> usize {
+        self.const_eval_i32(manager)
+            .expect("Not a constant expression")
+            .try_into()
+            .expect("Array size must be non-negative")
     }
 }
 

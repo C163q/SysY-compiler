@@ -1,5 +1,7 @@
+pub mod block;
 pub mod expr;
 pub mod func;
+pub mod global;
 pub mod meta;
 pub mod stdlib;
 
