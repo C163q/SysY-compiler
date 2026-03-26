@@ -48,6 +48,14 @@ impl ToAsm for ValueData {
             ValueKind::Call(call) => {
                 asms.extend(call.to_asm(context, id));
             }
+            ValueKind::GetElemPtr(get_elem_ptr) => {
+                asms.extend(get_elem_ptr.to_asm(context, id));
+            }
+            ValueKind::ZeroInit(_) => {
+                context
+                    .register_mapper
+                    .insert(RegisterValue::InstRet(id), Register::Zero);
+            }
             _ => unimplemented!("Value kind {:?} is not implemented yet", self.kind()),
         }
         asms

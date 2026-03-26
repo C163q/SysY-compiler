@@ -60,6 +60,21 @@ pub fn la_instruction(dest: Register, label: &str, context: Option<InstContext>)
     })
 }
 
+macro_rules! reusable_register_dest {
+    ($ctx:expr, $dest:expr) => {
+        if let Some(ctx) = $ctx {
+            let new_ctx = Some(InstContext {
+                context: ctx.context,
+                id: ctx.id,
+            });
+            register_dest($dest, new_ctx);
+            Some(ctx)
+        } else {
+            $ctx
+        }
+    };
+}
+
 macro_rules! binary_instruction {
     ($dest:expr, $src1:expr, $src2:expr, $context:expr, $variant:tt) => {
         use crate::asm::meta::{RiscvAsm, RiscvInstruction};
@@ -120,6 +135,33 @@ pub fn addi_instruction(
     })
 }
 
+pub fn addi_or_add_instruction(
+    dest: Register,
+    src: Register,
+    imm: RV32Imm,
+    context: Option<InstContext>,
+    rd: Option<Register>,
+) -> Vec<RiscvAsm> {
+    let context = reusable_register_dest!(context, dest);
+    let mut asms = vec![];
+    if !(-2048..=2047).contains(&imm.value()) {
+        match rd {
+            Some(rd) => {
+                asms.push(li_instruction(rd, imm.value(), None));
+                asms.push(add_instruction(dest, src, rd, context));
+            }
+            None => {
+                panic!(
+                    "Immediate {} is out of range for addi_or_add_instruction, and no temporary register provided",
+                    imm.value()
+                );
+            }
+        }
+        return asms;
+    }
+    vec![addi_instruction(dest, src, imm.value() as i16, context)]
+}
+
 pub fn lw_instruction(
     dest: Register,
     base: Register,
@@ -166,21 +208,6 @@ pub fn bnez_instruction(src: Register, label: &str) -> RiscvAsm {
         src,
         label: label.to_string(),
     })
-}
-
-macro_rules! reusable_register_dest {
-    ($ctx:expr, $dest:expr) => {
-        if let Some(ctx) = $ctx {
-            let new_ctx = Some(InstContext {
-                context: ctx.context,
-                id: ctx.id,
-            });
-            register_dest($dest, new_ctx);
-            Some(ctx)
-        } else {
-            $ctx
-        }
-    };
 }
 
 pub fn add_lw_instruction(

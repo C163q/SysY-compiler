@@ -1,4 +1,4 @@
-use koopa::ir::Program;
+use koopa::ir::{Program, Type};
 
 use crate::asm::meta::RiscvAsm;
 
@@ -21,5 +21,6 @@ pub fn generate_instruction(program: &Program) -> Vec<RiscvAsm> {
 }
 
 pub fn generate_asm(program: &Program) -> Vec<RiscvAsm> {
+    Type::set_ptr_size(4); // RISV32 uses 4-byte pointers
     generate_instruction(program)
 }

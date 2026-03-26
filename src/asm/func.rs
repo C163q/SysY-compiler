@@ -6,7 +6,7 @@ use crate::asm::{
     block,
     expr::{get_value, obtain_caller_directly_usable_register},
     inst,
-    meta::{self, FunctionContext, RV32Usize, RiscvAsm},
+    meta::{self, FunctionContext, OffsetDataType, RV32Usize, RiscvAsm},
 };
 
 /// Create empty stack frame before calling this function.
@@ -55,16 +55,20 @@ pub fn build_call_stack_and_registers(
             asms.push(mv);
         } else {
             let size = arg_data.ty().size() as RV32Usize;
-            context.memory_mapper.function_claim(*arg, size);
+            context
+                .memory_mapper
+                .function_claim(*arg, OffsetDataType::Value, size);
             let offset = context
                 .memory_mapper
                 .get_offset(arg, size)
                 .expect("Failed to get argument stack offset, it may not exist");
+            assert_eq!(offset.ty(), OffsetDataType::Value);
+
             let tmp = obtain_caller_directly_usable_register(context);
             let stores = inst::add_sw_instruction(
                 reg,
                 meta::Register::Sp,
-                meta::RV32Imm::new(offset as i32),
+                meta::RV32Imm::new(offset.offset() as i32),
                 None,
                 Some(tmp),
             );
@@ -129,7 +133,7 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
         let ty = data.ty();
         if !ty.is_unit() {
             match data.kind() {
-                ValueKind::Integer(_) | ValueKind::Return(_) => continue,
+                ValueKind::Integer(_) | ValueKind::Return(_) | ValueKind::ZeroInit(_) => continue,
                 ValueKind::Alloc(_) => {
                     // alloc return the type of the pointer
                     match ty.kind() {
@@ -142,7 +146,10 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
                 ValueKind::Load(_)
                 | ValueKind::Store(_)
                 | ValueKind::Binary(_)
-                | ValueKind::Call(_) => context.memory_mapper.stack_reserve(ty.size() as RV32Usize),
+                | ValueKind::Call(_)
+                | ValueKind::GetElemPtr(_) => {
+                    context.memory_mapper.stack_reserve(ty.size() as RV32Usize)
+                }
                 ValueKind::FuncArgRef(func_arg) => {
                     arg_ref_vec.push(ArgRefInfo::new(func_arg, ty.size() as RV32Usize));
                 }
