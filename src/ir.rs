@@ -1,3 +1,4 @@
+pub mod arr;
 pub mod block;
 pub mod expr;
 pub mod func;

@@ -490,14 +490,20 @@ impl From<BType> for Type {
 #[derive(Debug, Clone)]
 pub enum Def {
     Ident { ident: String },
-    Array { ident: String, size: ConstExpr },
+    Array { ident: String, sizes: Vec<InitExpr> },
 }
 
 impl Display for Def {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Def::Ident { ident } => write!(f, "{}", ident),
-            Def::Array { ident, size } => write!(f, "{}[{}]", ident, size),
+            Def::Array { ident, sizes } => {
+                write!(f, "{}", ident)?;
+                for size in sizes {
+                    write!(f, "[{}]", size)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -507,8 +513,15 @@ impl Def {
         Self::Ident { ident }
     }
 
-    pub fn new_array(ident: String, size: ConstExpr) -> Self {
-        Self::Array { ident, size }
+    pub fn new_array(ident: String, sizes: Vec<InitExpr>) -> Self {
+        assert!(
+            !sizes.is_empty(),
+            "The dimension of an array must be greater than 0."
+        );
+        for expr in sizes.iter() {
+            assert!(expr.is_const);
+        }
+        Self::Array { ident, sizes }
     }
 }
 
@@ -523,71 +536,29 @@ impl Def {
 #[derive(Debug, Clone)]
 pub struct ConstDef {
     pub definition: Def,
-    pub init_val: ConstInitVal,
+    pub init_val: InitVal,
 }
 
 impl ConstDef {
-    pub fn new(definition: Def, init_val: ConstInitVal) -> Self {
+    pub fn new(definition: Def, init_val: InitVal) -> Self {
         Self {
             definition,
             init_val,
         }
     }
 
-    pub fn new_ident(ident: String, init_val: ConstInitVal) -> Self {
+    pub fn new_ident(ident: String, init_val: InitVal) -> Self {
         Self::new(Def::new_ident(ident), init_val)
     }
 
-    pub fn new_array(ident: String, size: ConstExpr, init_val: ConstInitVal) -> Self {
-        Self::new(Def::new_array(ident, size), init_val)
+    pub fn new_array(ident: String, sizes: Vec<InitExpr>, init_val: InitVal) -> Self {
+        Self::new(Def::new_array(ident, sizes), init_val)
     }
 }
 
 impl Display for ConstDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} = {}", self.definition, self.init_val)
-    }
-}
-
-/// 常量初值
-///
-/// ```c
-/// //              expr
-/// //                ↓
-/// //            ---------
-/// const int a = 1 + 2 * 3;
-/// ```
-#[derive(Debug, Clone)]
-pub enum ConstInitVal {
-    Expr(ConstExpr),
-    Array(Vec<ConstExpr>),
-}
-
-impl ConstInitVal {
-    pub fn new_expr(expr: ConstExpr) -> Self {
-        Self::Expr(expr)
-    }
-
-    pub fn new_array(array: Vec<ConstExpr>) -> Self {
-        Self::Array(array)
-    }
-}
-
-impl Display for ConstInitVal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConstInitVal::Expr(expr) => write!(f, "{}", expr),
-            ConstInitVal::Array(array) => {
-                write!(f, "{{")?;
-                for (i, expr) in array.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", expr)?;
-                }
-                write!(f, "}}")
-            }
-        }
     }
 }
 
@@ -637,8 +608,8 @@ impl VarDef {
         Self::new(Def::new_ident(ident), init_val)
     }
 
-    pub fn new_array(ident: String, size: ConstExpr, init_val: Option<InitVal>) -> Self {
-        Self::new(Def::new_array(ident, size), init_val)
+    pub fn new_array(ident: String, sizes: Vec<InitExpr>, init_val: Option<InitVal>) -> Self {
+        Self::new(Def::new_array(ident, sizes), init_val)
     }
 }
 
@@ -654,17 +625,30 @@ impl Display for VarDef {
 /// 初值
 #[derive(Debug, Clone)]
 pub enum InitVal {
-    Expr(Expr),
-    Array(Vec<Expr>),
+    Expr(InitExpr),
+    Array(Vec<InitVal>),
+    ZeroInit(Type), // Only used by IR parser
 }
 
 impl InitVal {
-    pub fn new_expr(expr: Expr) -> Self {
+    pub fn new_expr(expr: InitExpr) -> Self {
         Self::Expr(expr)
     }
 
-    pub fn new_array(array: Vec<Expr>) -> Self {
+    pub fn new_const_expr(expr: Expr) -> Self {
+        Self::Expr(InitExpr::new_const(expr))
+    }
+
+    pub fn new_var_expr(expr: Expr) -> Self {
+        Self::Expr(InitExpr::new_var(expr))
+    }
+
+    pub fn new_array(array: Vec<InitVal>) -> Self {
         Self::Array(array)
+    }
+
+    pub fn new_zero(ty: Type) -> Self {
+        Self::ZeroInit(ty)
     }
 }
 
@@ -682,23 +666,32 @@ impl Display for InitVal {
                 }
                 write!(f, "}}")
             }
+            InitVal::ZeroInit(_) => write!(f, "0"),
         }
     }
 }
 
-/// 常量表达式
 #[derive(Debug, Clone)]
-pub struct ConstExpr {
+pub struct InitExpr {
+    pub is_const: bool,
     pub expr: Expr,
 }
 
-impl ConstExpr {
-    pub fn new(expr: Expr) -> Self {
-        Self { expr }
+impl InitExpr {
+    pub fn new(is_const: bool, expr: Expr) -> Self {
+        Self { is_const, expr }
+    }
+
+    pub fn new_const(expr: Expr) -> Self {
+        Self::new(true, expr)
+    }
+
+    pub fn new_var(expr: Expr) -> Self {
+        Self::new(false, expr)
     }
 }
 
-impl Display for ConstExpr {
+impl Display for InitExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.expr)
     }
@@ -1327,7 +1320,7 @@ impl Display for PrimaryExpr {
 #[derive(Debug, Clone)]
 pub enum LVal {
     Ident(String),
-    Array { ident: String, index: Box<Expr> },
+    Array { ident: String, index: Vec<Expr> },
 }
 
 impl LVal {
@@ -1335,11 +1328,12 @@ impl LVal {
         Self::Ident(ident)
     }
 
-    pub fn new_array(ident: String, index: Expr) -> Self {
-        Self::Array {
-            ident,
-            index: Box::new(index),
-        }
+    pub fn new_array(ident: String, index: Vec<Expr>) -> Self {
+        assert!(
+            !index.is_empty(),
+            "The dimension of an array must be greater than 0."
+        );
+        Self::Array { ident, index }
     }
 }
 
@@ -1347,7 +1341,13 @@ impl Display for LVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LVal::Ident(ident) => write!(f, "{}", ident),
-            LVal::Array { ident, index } => write!(f, "{}[{}]", ident, index),
+            LVal::Array { ident, index } => {
+                write!(f, "{}", ident)?;
+                for idx in index {
+                    write!(f, "[{}]", idx)?;
+                }
+                Ok(())
+            }
         }
     }
 }

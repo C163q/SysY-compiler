@@ -29,6 +29,14 @@ pub fn last_inst_vec(flows: &mut [BlockFlow]) -> &mut Vec<Instruction> {
     &mut last_flow(flows).insts
 }
 
+pub fn last_inst_vec_value(flows: &mut [BlockFlow]) -> Value {
+    *last_inst_vec(flows)
+        .last()
+        .copied()
+        .expect("Can't find value of the last instruction in the current basic block.")
+        .inst()
+}
+
 /// 转换为IR。
 pub trait IntoIr {
     /// 转换为IR。

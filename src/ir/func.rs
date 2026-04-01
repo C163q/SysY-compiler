@@ -233,10 +233,8 @@ fn func_scope(
 
         let alloc = data.dfg_mut().new_value().alloc(ty.clone());
         let store = data.dfg_mut().new_value().store(param, alloc);
-        last_inst_vec(&mut flows).extend(vec![
-            Instruction::new(alloc, true),
-            Instruction::new(store, true),
-        ]);
+        last_inst_vec(&mut flows)
+            .extend([Instruction::new(alloc, true), Instruction::new(store, true)]);
 
         guard
             .inner()

@@ -1,5 +1,5 @@
 use koopa::ir::{
-    BinaryOp, Type,
+    BinaryOp, Type, TypeKind,
     builder::{LocalInstBuilder, ValueBuilder},
     dfg::DataFlowGraph,
 };
@@ -7,6 +7,7 @@ use koopa::ir::{
 use crate::{
     ir::meta::{
         BlockFlow, ConstValue, Instruction, IntoIr, Variable, VariableManager, last_inst_vec,
+        last_inst_vec_value,
     },
     parse::ast::{self, EqExpr},
 };
@@ -155,7 +156,7 @@ impl IntoIr for ast::LAndExpr {
                     .expect("%tmp variable should not be defined");
                 let zero = dfg.new_value().integer(0);
                 let store_zero = dfg.new_value().store(zero, tmp_val);
-                last_inst_vec(flows).extend(vec![
+                last_inst_vec(flows).extend([
                     Instruction::new(tmp_val, true),
                     Instruction::new(zero, false),
                     Instruction::new(store_zero, true),
@@ -221,7 +222,7 @@ impl IntoIr for ast::LOrExpr {
 
                 let one = dfg.new_value().integer(1);
                 let store_one = dfg.new_value().store(one, tmp_val);
-                last_inst_vec(flows).extend(vec![
+                last_inst_vec(flows).extend([
                     Instruction::new(tmp_val, true),
                     Instruction::new(one, false),
                     Instruction::new(store_one, true),
@@ -419,17 +420,11 @@ fn ident_lval_ir(
 
 fn array_lval_ir(
     ident: String,
-    index: ast::Expr,
+    index: Vec<ast::Expr>,
     dfg: &mut DataFlowGraph,
     manager: &mut VariableManager,
     flows: &mut Vec<BlockFlow>,
 ) {
-    index.into_ir(dfg, manager, flows);
-    let index_val = *last_inst_vec(flows)
-        .last()
-        .copied()
-        .expect("Array index expect a value")
-        .inst();
     match manager.get(&ident) {
         Some(var) => match var {
             Variable::Const(val) => match val {
@@ -437,21 +432,31 @@ fn array_lval_ir(
                     panic!("'{}' is not an array", ident)
                 }
                 ConstValue::Array(value) => {
-                    let ptr = dfg.new_value().get_elem_ptr(*value, index_val);
+                    let mut ptr = *value;
+                    for idx in index {
+                        idx.into_ir(dfg, manager, flows);
+                        let idx_val = last_inst_vec_value(flows);
+                        ptr = dfg.new_value().get_elem_ptr(ptr, idx_val);
+                        last_inst_vec(flows).push(Instruction::new(ptr, true));
+                    }
+
                     let load = dfg.new_value().load(ptr);
-                    last_inst_vec(flows).extend(vec![
-                        Instruction::new(ptr, true),
-                        Instruction::new(load, true),
-                    ])
+                    last_inst_vec(flows)
+                        .extend([Instruction::new(ptr, true), Instruction::new(load, true)])
                 }
             },
             Variable::Var(var) => {
-                let ptr = dfg.new_value().get_elem_ptr(*var.value(), index_val);
+                let mut ptr = *var.value();
+                for idx in index {
+                    idx.into_ir(dfg, manager, flows);
+                    let idx_val = last_inst_vec_value(flows);
+                    ptr = dfg.new_value().get_elem_ptr(ptr, idx_val);
+                    last_inst_vec(flows).push(Instruction::new(ptr, true));
+                }
+
                 let load = dfg.new_value().load(ptr);
-                last_inst_vec(flows).extend(vec![
-                    Instruction::new(ptr, true),
-                    Instruction::new(load, true),
-                ])
+                last_inst_vec(flows)
+                    .extend([Instruction::new(ptr, true), Instruction::new(load, true)])
             }
         },
         None => panic!("Variable '{}' not defined", ident),
@@ -467,7 +472,7 @@ impl IntoIr for ast::LVal {
     ) {
         match self {
             ast::LVal::Ident(ident) => ident_lval_ir(ident, dfg, manager, flows),
-            ast::LVal::Array { ident, index } => array_lval_ir(ident, *index, dfg, manager, flows),
+            ast::LVal::Array { ident, index } => array_lval_ir(ident, index, dfg, manager, flows),
         }
     }
 
@@ -490,20 +495,21 @@ impl IntoIr for ast::LVal {
     }
 }
 
-impl IntoIr for ast::ConstInitVal {
+impl IntoIr for ast::InitVal {
     fn into_ir(self, _: &mut DataFlowGraph, _: &mut VariableManager, _: &mut Vec<BlockFlow>) {
         panic!("ConstInitVal should not be handled here!");
     }
 
     fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
         match self {
-            ast::ConstInitVal::Expr(expr) => expr.const_eval_i32(manager),
-            ast::ConstInitVal::Array(_) => None,
+            ast::InitVal::Expr(val) => val.const_eval_i32(manager),
+            ast::InitVal::Array(_) => None,
+            ast::InitVal::ZeroInit(ty) => Some(0).filter(|_| matches!(ty.kind(), TypeKind::Int32)),
         }
     }
 }
 
-impl IntoIr for ast::ConstExpr {
+impl IntoIr for ast::InitExpr {
     fn into_ir(
         self,
         dfg: &mut DataFlowGraph,
@@ -514,11 +520,12 @@ impl IntoIr for ast::ConstExpr {
     }
 
     fn const_eval_i32(&self, manager: &VariableManager) -> Option<i32> {
+        // FIXME: some non-constant expression may also be evaluated to a constant value
         self.expr.const_eval_i32(manager)
     }
 }
 
-impl ast::ConstExpr {
+impl ast::InitExpr {
     pub fn eval_usize(&self, manager: &VariableManager) -> usize {
         self.const_eval_i32(manager)
             .expect("Not a constant expression")

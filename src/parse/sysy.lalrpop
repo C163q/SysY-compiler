@@ -10,7 +10,6 @@ use crate::parse::ast::{
     Decl,
     ConstDecl,
     ConstDef,
-    ConstInitVal,
     VarDecl,
     VarDef,
     InitVal,
@@ -25,7 +24,7 @@ use crate::parse::ast::{
     UnaryOp,
     UnaryExpr,
     PrimaryExpr,
-    ConstExpr,
+    InitExpr,
     Number,
     AddOp,
     AddExpr,
@@ -99,25 +98,30 @@ BType: BType = {
     "void" => BType::Void,
 }
 
-/// ConstDef ::= IDENT ( "[" ConstExp "]" )? "=" ConstInitVal;
+/// ConstDef ::= IDENT ( "[" ConstExp "]" )* "=" ConstInitVal;
 ConstDef: ConstDef = {
-    <Ident> "=" <ConstInitVal> => ConstDef::new_ident(<>),
-    <Ident> "[" <ConstExp> "]" "=" <ConstInitVal> => ConstDef::new_array(<>),
+    <ident:Ident> <indexs:("[" <ConstExp> "]")*> "=" <init:ConstInitVal> => {
+        if indexs.is_empty() {
+            ConstDef::new_ident(ident, init)
+        } else {
+            ConstDef::new_array(ident, indexs, init)
+        }
+    }
 }
 
-ConstInitValArray: Vec<ConstExpr> = {
-    <exp:ConstExp> <exps:("," <ConstExp>)*> => {
-        let mut vec = vec![exp];
-        vec.extend(exps);
+ConstInitValArray: Vec<InitVal> = {
+    <val:ConstInitVal> <vals:("," <ConstInitVal>)*> => {
+        let mut vec = vec![val];
+        vec.extend(vals);
         vec
     }
 }
 
 /// ConstInitVal ::= ConstExp | "{" (ConstExp ("," ConstExp)*)? "}";
-ConstInitVal: ConstInitVal = {
-    <ConstExp> => ConstInitVal::new_expr(<>),
+ConstInitVal: InitVal = {
+    <ConstExp> => InitVal::new_expr(<>),
     "{" <maybe_array:ConstInitValArray?> "}" => {
-        ConstInitVal::new_array(maybe_array.unwrap_or_else(Vec::new))
+        InitVal::new_array(maybe_array.unwrap_or_else(Vec::new))
     }
 }
 
@@ -130,27 +134,35 @@ VarDecl: VarDecl = {
     }
 }
 
-/// VarDef ::= IDENT ("[" ConstExp "]")? | IDENT ("[" ConstExp "]")? "=" InitVal;
+/// VarDef ::= IDENT ("[" ConstExp "]")* | IDENT ("[" ConstExp "]")* "=" InitVal;
 VarDef: VarDef = {
-    <ident:Ident> => VarDef::new_ident(ident, None),
-    <ident:Ident> "[" <exp:ConstExp> "]" => VarDef::new_array(ident, exp, None),
-    <ident:Ident> "=" <init:InitVal> => VarDef::new_ident(ident, Some(init)),
-    <ident:Ident> "[" <exp:ConstExp> "]" "=" <init:InitVal> => {
-        VarDef::new_array(ident, exp, Some(init))
+    <ident:Ident> <indexs:("[" <ConstExp> "]")*> "=" <init:InitVal> => {
+        if indexs.is_empty() {
+            VarDef::new_ident(ident, Some(init))
+        } else {
+            VarDef::new_array(ident, indexs, Some(init))
+        }
+    },
+    <ident:Ident> <indexs:("[" <ConstExp> "]")*> => {
+        if indexs.is_empty() {
+            VarDef::new_ident(ident, None)
+        } else {
+            VarDef::new_array(ident, indexs, None)
+        }
     }
 }
 
-InitValArray: Vec<Expr> = {
-    <exp:Exp> <exps:("," <Exp>)*> => {
-        let mut vec = vec![exp];
-        vec.extend(exps);
+InitValArray: Vec<InitVal> = {
+    <init:InitVal> <inits:("," <InitVal>)*> => {
+        let mut vec = vec![init];
+        vec.extend(inits);
         vec
     }
 }
 
 /// InitVal ::= Exp | "{" (Exp ("," Exp)*)? "}";
 InitVal: InitVal = {
-    <Exp> => InitVal::new_expr(<>),
+    <Exp> => InitVal::new_var_expr(<>),
     "{" <maybe_array:InitValArray?> "}" => InitVal::new_array(maybe_array.unwrap_or_else(Vec::new)),
 }
 
@@ -189,7 +201,11 @@ Exp: Expr = <LOrExp> => Expr::new(<>);
 /// LVal ::= IDENT ("[" Exp "]")?;
 LVal: LVal = {
     <Ident> => LVal::new_ident(<>),
-    <Ident> "[" <Exp> "]" => LVal::new_array(<>),
+    <ident:Ident> "[" <exp:Exp> "]" <exps:("[" <Exp> "]")*> => {
+        let mut vec = vec![exp];
+        vec.extend(exps);
+        LVal::new_array(ident, vec)
+    }
 }
 
 /// PrimaryExp ::= "(" Exp ")" | Number;
@@ -282,7 +298,7 @@ LOrExp: LOrExpr = {
 }
 
 /// ConstExp ::= Exp;
-ConstExp: ConstExpr = <Exp> => ConstExpr::new(<>);
+ConstExp: InitExpr = <Exp> => InitExpr::new_const(<>);
 
 /// FuncRParams ::= Exp ("," Exp)*;
 FuncRParams: FuncRParams = {

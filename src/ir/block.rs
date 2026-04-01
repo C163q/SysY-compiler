@@ -1,13 +1,16 @@
 use koopa::ir::{
-    Type,
+    Type, TypeKind, Value,
     builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder},
     dfg::DataFlowGraph,
 };
 
 use crate::{
-    ir::meta::{
-        BlockFlow, ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager,
-        last_inst_vec,
+    ir::{
+        arr::{eval_array_dim, get_array_ty, normal_arr_to_aggregate, normalize_array},
+        meta::{
+            BlockFlow, ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager,
+            last_inst_vec, last_inst_vec_value,
+        },
     },
     parse::ast::{self, BType},
 };
@@ -40,6 +43,16 @@ impl IntoIr for ast::Decl {
     }
 }
 
+/// ```c
+/// int x = 10;
+/// ```
+///
+/// Generated IR:
+///
+/// ```IR
+/// @x = alloc i32
+/// store 10, @x
+/// ```
 fn define_simple_var(
     ident: String,
     ty: Type,
@@ -49,8 +62,12 @@ fn define_simple_var(
     flows: &mut Vec<BlockFlow>,
 ) {
     let vec = last_inst_vec(flows);
+
+    // IR: @x = alloc type
     let value = dfg.new_value().alloc(ty.clone());
     vec.push(Instruction::new(value, true));
+
+    // Variable manager: ident -> value
     manager
         .define_var(ident, value, ty)
         .unwrap_or_else(|e| panic!("Error defining variable: {}", e));
@@ -59,82 +76,98 @@ fn define_simple_var(
             ast::InitVal::Array(_) => {
                 panic!("Cannot initialize scalar variable with array initializer")
             }
+            // IR: IR<%expr>
             ast::InitVal::Expr(expr) => expr.into_ir(dfg, manager, flows),
+            ast::InitVal::ZeroInit(ty) => {
+                last_inst_vec(flows).push(Instruction::new(dfg.new_value().zero_init(ty), false))
+            }
         }
-        let src = *last_inst_vec(flows)
-            .last()
-            .copied()
-            .expect("Initialization expression should produce at least one value")
-            .inst();
+        let src = last_inst_vec_value(flows);
+
+        // IR: store RET<%expr>, @x
         let vec = last_inst_vec(flows);
         let store = dfg.new_value().store(src, value);
         vec.push(Instruction::new(store, true));
     }
 }
 
+fn init_arr(
+    value: Value,
+    init_val: ast::InitVal,
+    elem_ty: Type,
+    sizes: &[usize],
+    dfg: &mut DataFlowGraph,
+    manager: &mut VariableManager,
+    flows: &mut Vec<BlockFlow>,
+) {
+    match init_val {
+        ast::InitVal::Expr(_) => {
+            panic!("Cannot initialize array variable with scalar initializer")
+        }
+        ast::InitVal::Array(arr) => {
+            let arr = normalize_array(arr, sizes, elem_ty.clone());
+            normal_arr_to_aggregate(
+                arr,
+                elem_ty,
+                value,
+                &mut vec![0; sizes.len()],
+                sizes,
+                dfg,
+                manager,
+                flows,
+            );
+        }
+        ast::InitVal::ZeroInit(ty) => {
+            let zero = dfg.new_value().zero_init(ty.clone());
+            let store = dfg.new_value().store(zero, value);
+            last_inst_vec(flows).extend(vec![
+                Instruction::new(zero, false),
+                Instruction::new(store, true),
+            ]);
+        }
+    }
+}
+
+/// ```c
+/// int arr[2] = {1};
+/// ```
+///
+/// Generated IR:
+///
+/// ```IR
+/// @arr = alloc [i32, 2]
+/// %0 = getelemptr @arr, 0
+/// store 1, %0
+/// %1 = getelemptr @arr, 1
+/// store zero_init, %1
+/// ```
 fn define_array_var(
     ident: String,
-    size: ast::ConstExpr,
+    sizes: Vec<ast::InitExpr>,
     ty: Type,
     init_val: Option<ast::InitVal>,
     dfg: &mut DataFlowGraph,
     manager: &mut VariableManager,
     flows: &mut Vec<BlockFlow>,
 ) {
-    // Only support one-dimensional array for now.
-    let size = size
-        .const_eval_i32(manager)
-        .expect("Array size must be a constant expression");
-    let arr_ty = Type::get_array(
-        ty.clone(),
-        size.try_into().expect("Array size must be non-negative"),
+    assert!(
+        matches!(ty.kind(), TypeKind::Int32),
+        "Unsupported type for array variable '{}'",
+        ident
     );
-    let vec = last_inst_vec(flows);
+    let sizes = eval_array_dim(&sizes, manager);
+    let arr_ty = get_array_ty(ty.clone(), &sizes);
+
+    // IR: @arr = alloc [type, size]
     let value = dfg.new_value().alloc(arr_ty.clone());
+
+    // Variable manager: ident -> value
     manager
         .define_var(ident, value, arr_ty)
         .unwrap_or_else(|e| panic!("Error defining variable: {}", e));
-    vec.push(Instruction::new(value, true));
+    last_inst_vec(flows).push(Instruction::new(value, true));
     if let Some(init_val) = init_val {
-        match init_val {
-            ast::InitVal::Expr(_) => {
-                panic!("Cannot initialize array variable with scalar initializer")
-            }
-            ast::InitVal::Array(arr) => {
-                let arr_len = arr.len() as i32;
-                for (i, expr) in arr.into_iter().enumerate() {
-                    expr.into_ir(dfg, manager, flows);
-                    let src = *last_inst_vec(flows)
-                        .last()
-                        .copied()
-                        .expect("Initialization expression should produce at least one value")
-                        .inst();
-                    let index = dfg.new_value().integer(i as i32);
-                    let ptr = dfg.new_value().get_elem_ptr(value, index);
-                    let store = dfg.new_value().store(src, ptr);
-                    let vec = last_inst_vec(flows);
-                    vec.extend(vec![
-                        Instruction::new(index, false),
-                        Instruction::new(ptr, true),
-                        Instruction::new(store, true),
-                    ]);
-                }
-
-                for i in arr_len..size {
-                    let index = dfg.new_value().integer(i);
-                    let ptr = dfg.new_value().get_elem_ptr(value, index);
-                    let zero = dfg.new_value().zero_init(ty.clone());
-                    let store = dfg.new_value().store(zero, ptr);
-                    let vec = last_inst_vec(flows);
-                    vec.extend(vec![
-                        Instruction::new(index, false),
-                        Instruction::new(ptr, true),
-                        Instruction::new(zero, false),
-                        Instruction::new(store, true),
-                    ]);
-                }
-            }
-        }
+        init_arr(value, init_val, ty, &sizes, dfg, manager, flows);
     }
 }
 
@@ -155,8 +188,8 @@ impl IntoIr for ast::VarDecl {
                 ast::Def::Ident { ident } => {
                     define_simple_var(ident, ty, init_val, dfg, manager, flows)
                 }
-                ast::Def::Array { ident, size } => {
-                    define_array_var(ident, size, ty, init_val, dfg, manager, flows)
+                ast::Def::Array { ident, sizes } => {
+                    define_array_var(ident, sizes, ty, init_val, dfg, manager, flows)
                 }
             }
         }
@@ -174,20 +207,29 @@ impl IntoIr for ast::ConstDecl {
     }
 }
 
+/// ```c
+/// const int x = 10;
+/// ```
+///
+/// No IR generated.
 pub(super) fn define_simple_const(
     ident: String,
     ty: BType,
-    init_val: ast::ConstInitVal,
+    init_val: ast::InitVal,
     manager: &mut VariableManager,
 ) {
     match ty {
+        //
+        // Consteval the expression.
         BType::Int => match init_val.const_eval_i32(manager) {
             Some(value) => {
+                // Variable manager: ident -> value
                 manager
                     .define_const(ident, ConstValue::Int(value))
                     .unwrap_or_else(|e| panic!("Error defining constant: {}", e));
             }
             None => {
+                // Consteval failed.
                 panic!(
                     "Initialization value for constant '{}' is not a constant expression",
                     ident
@@ -198,74 +240,47 @@ pub(super) fn define_simple_const(
     }
 }
 
+/// ```c
+/// const int arr[2] = {1};
+/// ```
+///
+/// Generated IR:
+///
+/// ```IR
+/// @arr = alloc [i32, 2]
+/// %0 = getelemptr @arr, 0
+/// store 1, %0
+/// %1 = getelemptr @arr, 1
+/// store zero_init, %1
+/// ```
 pub(super) fn define_array_const(
     ident: String,
-    size: ast::ConstExpr,
-    ty: BType,
-    init_val: ast::ConstInitVal,
+    sizes: Vec<ast::InitExpr>,
+    ty: Type,
+    init_val: ast::InitVal,
     dfg: &mut DataFlowGraph,
     manager: &mut VariableManager,
-    flows: &mut [BlockFlow],
+    flows: &mut Vec<BlockFlow>,
 ) {
     // Only support one-dimensional array for now.
     assert!(
-        matches!(ty, BType::Int),
+        matches!(ty.kind(), TypeKind::Int32),
         "Unsupported type for array constant '{}'",
         ident
     );
-    let size = size
-        .const_eval_i32(manager)
-        .expect("Array size must be a constant expression");
-    let arr_ty = Type::get_array(
-        ty.into(),
-        size.try_into().expect("Array size must be non-negative"),
-    );
-    let vec = last_inst_vec(flows);
+    let sizes = eval_array_dim(&sizes, manager);
+    let arr_ty = get_array_ty(ty.clone(), &sizes);
+
+    // IR: @arr = alloc [type, size]
     let value = dfg.new_value().alloc(arr_ty.clone());
+
+    // Variable manager: ident -> value
     manager
         .define_const(ident, ConstValue::Array(value))
         .unwrap_or_else(|e| panic!("Error defining constant: {}", e));
-    vec.push(Instruction::new(value, true));
+    last_inst_vec(flows).push(Instruction::new(value, true));
 
-    match init_val {
-        ast::ConstInitVal::Expr(_) => {
-            panic!("Cannot initialize array constant with scalar initializer")
-        }
-        ast::ConstInitVal::Array(arr) => match ty {
-            BType::Int => {
-                let arr_len = arr.len() as i32;
-                for (i, expr) in arr.into_iter().enumerate() {
-                    let src = expr.const_eval_i32(manager).expect(
-                            "Initialization expression for array constant must be a constant expression",
-                        );
-                    let index = dfg.new_value().integer(i as i32);
-                    let ptr = dfg.new_value().get_elem_ptr(value, index);
-                    let num = dfg.new_value().integer(src);
-                    let store = dfg.new_value().store(num, ptr);
-                    vec.extend(vec![
-                        Instruction::new(index, false),
-                        Instruction::new(ptr, true),
-                        Instruction::new(num, false),
-                        Instruction::new(store, true),
-                    ]);
-                }
-
-                for i in arr_len..size {
-                    let index = dfg.new_value().integer(i);
-                    let ptr = dfg.new_value().get_elem_ptr(value, index);
-                    let zero = dfg.new_value().zero_init(ty.into());
-                    let store = dfg.new_value().store(zero, ptr);
-                    vec.extend(vec![
-                        Instruction::new(index, false),
-                        Instruction::new(ptr, true),
-                        Instruction::new(zero, false),
-                        Instruction::new(store, true),
-                    ]);
-                }
-            }
-            BType::Void => unreachable!(),
-        },
-    }
+    init_arr(value, init_val, ty, &sizes, dfg, manager, flows);
 }
 
 impl ast::ConstDecl {
@@ -273,7 +288,7 @@ impl ast::ConstDecl {
         self,
         dfg: &mut DataFlowGraph,
         manager: &mut VariableManager,
-        flows: &mut [BlockFlow],
+        flows: &mut Vec<BlockFlow>,
     ) {
         let ty = self.ty;
         let defs = self.def;
@@ -281,14 +296,23 @@ impl ast::ConstDecl {
             let definition = def.definition;
             match definition {
                 ast::Def::Ident { ident } => define_simple_const(ident, ty, def.init_val, manager),
-                ast::Def::Array { ident, size } => {
-                    define_array_const(ident, size, ty, def.init_val, dfg, manager, flows)
+                ast::Def::Array { ident, sizes } => {
+                    define_array_const(ident, sizes, ty.into(), def.init_val, dfg, manager, flows)
                 }
             }
         }
     }
 }
 
+/// ```c
+/// x = x + 1;
+/// ```
+///
+/// Generated IR:
+///
+/// ```IR
+/// %0 = add %0, 1
+/// ```
 fn assign_ir(
     lval: ast::LVal,
     expr: ast::Expr,
@@ -296,13 +320,10 @@ fn assign_ir(
     manager: &mut VariableManager,
     flows: &mut Vec<BlockFlow>,
 ) {
+    // IR: IR<%expr>
     expr.into_ir(dfg, manager, flows);
+    let src = last_inst_vec_value(flows);
     let vec = last_inst_vec(flows);
-    let src = *vec
-        .last()
-        .copied()
-        .expect("Assignment expression should produce at least one value")
-        .inst();
     match lval {
         ast::LVal::Ident(ident) => {
             let var = manager
@@ -313,6 +334,7 @@ fn assign_ir(
                     panic!("Cannot assign to constant variable: {}", ident)
                 }
                 Variable::Var(var) => {
+                    // IR: store RET<%expr>, @x
                     let var = var.clone();
                     let dest = *var.value();
                     let store = dfg.new_value().store(src, dest);
@@ -327,20 +349,22 @@ fn assign_ir(
             match var {
                 Variable::Const(_) => panic!("Cannot assign to constant variable: {}", ident),
                 Variable::Var(var) => {
+                    if index.is_empty() {
+                        panic!("Array variable '{}' must be indexed", ident);
+                    }
                     let arr = *var.value();
-                    index.into_ir(dfg, manager, flows);
-                    let vec = last_inst_vec(flows);
-                    let index = *vec
-                        .last()
-                        .copied()
-                        .expect("Array index expression should produce at least one value")
-                        .inst();
-                    let ptr = dfg.new_value().get_elem_ptr(arr, index);
-                    let store = dfg.new_value().store(src, ptr);
-                    vec.extend(vec![
-                        Instruction::new(ptr, true),
-                        Instruction::new(store, true),
-                    ]);
+                    let mut value = arr;
+                    for idx in index {
+                        // IR: IR<%idx>
+                        idx.into_ir(dfg, manager, flows);
+                        let idx_val = last_inst_vec_value(flows);
+                        value = dfg.new_value().get_elem_ptr(value, idx_val);
+                        last_inst_vec(flows).push(Instruction::new(value, true));
+                    }
+
+                    // IR: store RET<%expr>, %0
+                    let store = dfg.new_value().store(src, value);
+                    last_inst_vec(flows).push(Instruction::new(store, true));
                 }
             }
         }
@@ -457,11 +481,7 @@ impl IntoIr for (ast::IfBranch, ast::ElseBranch) {
 
         // IF
         if_branch.cond.into_ir(dfg, manager, flows);
-        let cond_val = *last_inst_vec(flows)
-            .last()
-            .copied()
-            .expect("Condition expression should produce at least one value")
-            .inst();
+        let cond_val = last_inst_vec_value(flows);
 
         let mut if_flow = vec![];
 
@@ -519,11 +539,7 @@ impl IntoIr for ast::WhileBranch {
         while_flow.push(entry_flow);
 
         self.cond.into_ir(dfg, manager, &mut while_flow);
-        let cond_val = *last_inst_vec(&mut while_flow)
-            .last()
-            .copied()
-            .expect("Condition expression should produce at least one value")
-            .inst();
+        let cond_val = last_inst_vec_value(&mut while_flow);
         last_inst_vec(&mut while_flow).push(Instruction::new(
             dfg.new_value().branch(cond_val, body, end),
             true,
