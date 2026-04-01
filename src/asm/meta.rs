@@ -3,11 +3,14 @@ use std::{
     fmt::{self, Debug, Display},
     mem,
     num::NonZero,
+    sync::atomic::AtomicBool,
 };
 
-use koopa::ir::{BasicBlock, FunctionData, Program, Value, values::FuncArgRef};
+use koopa::ir::{BasicBlock, FunctionData, Program, Value, ValueKind, values::FuncArgRef};
 
 use crate::asm::inst;
+
+pub static ASM_SHOW_IR: AtomicBool = AtomicBool::new(false);
 
 pub const INDENT: &str = "  ";
 
@@ -427,6 +430,15 @@ pub enum OffsetDataType {
     Ptr(NonZero<u32>),
 }
 
+impl From<u32> for OffsetDataType {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => OffsetDataType::Value,
+            level => OffsetDataType::Ptr(NonZero::new(level).unwrap()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct OffsetData {
     pub offset: RV32Usize,
@@ -778,6 +790,10 @@ impl Default for MemoryMapper {
 }
 
 impl MemoryMapper {
+    pub fn claimed(&self) -> u32 {
+        self.stack_allocator.claimed
+    }
+
     pub fn new() -> Self {
         MemoryMapper {
             stack_allocator: StackSizeAllocator::new(),
@@ -799,6 +815,10 @@ impl MemoryMapper {
 
     pub fn stack_claim(&mut self, value: Value, ty: OffsetDataType, size: RV32Usize) {
         self.stack_allocator.claim(value, ty, size);
+    }
+
+    pub fn stack_unclaim(&mut self, value: Value) {
+        self.stack_allocator.map.remove(&value);
     }
 
     pub fn function_claim(&mut self, value: Value, ty: OffsetDataType, size: RV32Usize) {
@@ -1349,6 +1369,7 @@ pub enum RiscvAsm {
     Label(String),
     Init(RiscvInit),
     Instruction(RiscvInstruction),
+    Comment(String),
     None, // for formatting
 }
 
@@ -1360,7 +1381,30 @@ impl Display for RiscvAsm {
             RiscvAsm::Label(name) => write!(f, "{}:", name),
             RiscvAsm::Init(init) => write!(f, "{}", init),
             RiscvAsm::Instruction(inst) => write!(f, "{}", inst),
+            RiscvAsm::Comment(content) => write!(f, "{}; {}", INDENT, content),
             RiscvAsm::None => Ok(()),
         }
+    }
+}
+
+pub fn value_type_to_string(value_kind: &ValueKind) -> String {
+    match value_kind {
+        ValueKind::Integer(_) => "integer".to_string(),
+        ValueKind::ZeroInit(_) => "zero_init".to_string(),
+        ValueKind::Undef(_) => "undef".to_string(),
+        ValueKind::Aggregate(_) => "aggregate".to_string(),
+        ValueKind::FuncArgRef(_) => "func_arg_ref".to_string(),
+        ValueKind::BlockArgRef(_) => "block_arg_ref".to_string(),
+        ValueKind::Alloc(_) => "alloc".to_string(),
+        ValueKind::GlobalAlloc(_) => "global_alloc".to_string(),
+        ValueKind::Load(_) => "load".to_string(),
+        ValueKind::Store(_) => "store".to_string(),
+        ValueKind::GetPtr(_) => "get_ptr".to_string(),
+        ValueKind::GetElemPtr(_) => "get_elem_ptr".to_string(),
+        ValueKind::Binary(_) => "binary".to_string(),
+        ValueKind::Branch(_) => "br".to_string(),
+        ValueKind::Jump(_) => "jump".to_string(),
+        ValueKind::Call(_) => "call".to_string(),
+        ValueKind::Return(_) => "ret".to_string(),
     }
 }

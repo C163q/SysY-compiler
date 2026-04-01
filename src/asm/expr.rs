@@ -13,7 +13,7 @@ use koopa::ir::{
 use crate::asm::func::build_call_stack_and_registers;
 use crate::asm::inst::InstContext;
 use crate::asm::meta::{OffsetDataType, RV32Imm, RV32Usize};
-use crate::asm::var::{LoadContext, StoreContext};
+use crate::asm::var::{LoadContext, StoreContext, get_ptr_level_from_ty};
 use crate::asm::{expr, var};
 use crate::asm::{
     inst,
@@ -376,23 +376,60 @@ impl ToAsm for Binary {
 
 impl ToAsm for Alloc {
     fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
+        let mut asms = vec![];
         // Alloc has a type of pointer.
         let ty_ptr = context.func_data.dfg().value(id).ty();
 
         // But we need to store the underlying type in the stack, so we need to get the underlying
         // type of the pointer.
-        let size = match ty_ptr.kind() {
-            TypeKind::Pointer(ty) => ty.size(),
-            _ => panic!(
-                "The type of Alloc value is expected to be pointer, but found {:?}",
-                ty_ptr
-            ),
-        };
+        let under_lying_ty = var::get_ptr_base_ty(ty_ptr);
+        let size = under_lying_ty.size();
 
+        let data_ty = get_ptr_level_from_ty(under_lying_ty.kind().clone()).into();
         context
             .memory_mapper
-            .stack_claim(id, OffsetDataType::Value, size as RV32Usize);
-        vec![]
+            .stack_claim(id, data_ty, size as RV32Usize);
+        let value_offset = context
+            .memory_mapper
+            .get_offset(&id, size as RV32Usize)
+            .expect("Failed to get stack offset for alloc value")
+            .offset();
+        context.memory_mapper.stack_unclaim(id);
+        let rd = expr::obtain_caller_directly_usable_register(context);
+        asms.extend(inst::addi_or_add_instruction(
+            rd,
+            Register::Sp,
+            RV32Imm::new(value_offset as i32),
+            Some(InstContext::new(context, id)),
+            Some(rd),
+        ));
+
+        context.memory_mapper.stack_claim(
+            id,
+            OffsetDataType::Ptr(
+                NonZero::new(get_ptr_level_from_ty(ty_ptr.kind().clone())).unwrap(),
+            ),
+            ty_ptr.size() as RV32Usize,
+        );
+        let ptr_offset = context
+            .memory_mapper
+            .get_offset(&id, ty_ptr.size() as RV32Usize)
+            .expect("Failed to get stack offset for alloc pointer value")
+            .offset();
+        let dst = expr::obtain_caller_directly_usable_register(context);
+        asms.extend(inst::addi_or_add_instruction(
+            dst,
+            Register::Sp,
+            RV32Imm::new(ptr_offset as i32),
+            Some(InstContext::new(context, id)),
+            Some(dst),
+        ));
+
+        asms.push(inst::sw_instruction(rd, dst, 0, None));
+        context.register_mapper.remove(id, dst);
+        context.register_mapper.remove(id, rd);
+
+        asms
     }
 }
 
@@ -403,6 +440,10 @@ impl ToAsm for Load {
             .expect("Error occurs when trying to load value for load instruction");
         asms.extend(vec);
 
+        let src_ty = var::get_value_ty(self.src(), context);
+        let under_lying_ty = var::get_ptr_base_ty(&src_ty);
+        let data_ty = get_ptr_level_from_ty(under_lying_ty.kind().clone()).into();
+
         // load IR return value into rd, and then store it to the stack.
         //
         // To get value directly from the stack and not be pushed to the stack, get_value() should
@@ -412,7 +453,10 @@ impl ToAsm for Load {
                 rd,
                 id,
                 context,
-                StoreContext::new().with_id(id).with_claim(true),
+                StoreContext::new()
+                    .with_id(id)
+                    .with_ty(data_ty)
+                    .with_claim(true),
             )
             .expect("Error occurs when trying to store load result to stack"),
         );
@@ -432,6 +476,7 @@ impl ToAsm for Store {
             .next()
             .expect("No register assigned for store value");
 
+        // TODO: store with OffsetDataType
         asms.extend(
             var::store(rd, self.dest(), context, StoreContext::new().with_id(id))
                 .expect("Error occurs when trying to store value to destination"),
@@ -543,7 +588,7 @@ fn get_elem_ptr_offset(
             .memory_mapper
             .get_offset(&src, size)
             .ok_or(format!("Value {:?} is not mapped to stack memory", src))?;
-        assert_eq!(offset.ty(), OffsetDataType::Value);
+        // assert_eq!(offset.ty(), OffsetDataType::Value);
 
         let rd = expr::obtain_caller_directly_usable_register(context);
         asms.extend(inst::addi_or_add_instruction(
@@ -552,6 +597,12 @@ fn get_elem_ptr_offset(
             RV32Imm::Num(offset.offset() as i32),
             Some(InstContext::new(context, id)),
             Some(rd),
+        ));
+        asms.push(inst::lw_instruction(
+            rd,
+            rd,
+            0,
+            Some(InstContext::new(context, id)),
         ));
 
         let elem_ty = match data.ty().kind() {
@@ -589,6 +640,12 @@ fn get_elem_ptr_offset(
 impl ToAsm for GetElemPtr {
     fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
         let mut asms = vec![];
+        let level = var::get_ptr_level(self.src(), context);
+
+        assert!(
+            level > 0,
+            "Try to get element pointer of a non-pointer value"
+        );
         let (rd, vec) =
             get_elem_ptr_offset(self.src(), self.index(), context, id).unwrap_or_else(|err| {
                 panic!(
@@ -607,7 +664,8 @@ impl ToAsm for GetElemPtr {
                 StoreContext::new()
                     .with_id(id)
                     .with_claim(true)
-                    .with_ty(OffsetDataType::Ptr(NonZero::new(1).unwrap())),
+                    // GetElemPtr: *[i32, N] -> *i32
+                    .with_ty(OffsetDataType::Ptr(NonZero::new(level - 1).unwrap())),
             )
             .expect("Error occurs when trying to store get_elem_ptr result to stack"),
         );

@@ -142,6 +142,8 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
                         }
                         _ => panic!("Alloc value should return pointer type, but got {:?}", ty),
                     }
+                    // and reserve pointer size to track the allocated address
+                    context.memory_mapper.stack_reserve(ty.size() as RV32Usize);
                 }
                 ValueKind::Load(_)
                 | ValueKind::Store(_)

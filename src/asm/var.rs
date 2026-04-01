@@ -1,6 +1,6 @@
 use std::{cell::Ref, num::NonZero};
 
-use koopa::ir::{Program, Value, ValueKind, entities::ValueData};
+use koopa::ir::{Program, Type, TypeKind, Value, ValueKind, entities::ValueData};
 
 use crate::asm::{
     expr,
@@ -375,4 +375,36 @@ pub fn store_to_local(
     }
 
     Ok(asms)
+}
+
+pub fn get_ptr_level_from_ty(ty: TypeKind) -> u32 {
+    match ty {
+        TypeKind::Pointer(base) => 1 + get_ptr_level_from_ty(base.kind().clone()),
+        TypeKind::Array(base, _) => 1 + get_ptr_level_from_ty(base.kind().clone()),
+        _ => 0,
+    }
+}
+
+pub fn get_ptr_level(val: Value, context: &FunctionContext) -> u32 {
+    let ty = if val.is_global() {
+        context.program.borrow_value(val).ty().kind().clone()
+    } else {
+        context.func_data.dfg().value(val).ty().kind().clone()
+    };
+    get_ptr_level_from_ty(ty)
+}
+
+pub fn get_ptr_base_ty(ty_ptr: &Type) -> &Type {
+    match ty_ptr.kind() {
+        TypeKind::Pointer(ty) => ty,
+        _ => panic!("Expected to be pointer, but found {:?}", ty_ptr),
+    }
+}
+
+pub fn get_value_ty(value: Value, context: &FunctionContext) -> Type {
+    if value.is_global() {
+        context.program.borrow_value(value).ty().clone()
+    } else {
+        context.func_data.dfg().value(value).ty().clone()
+    }
 }

@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use koopa::ir::{
     BasicBlock, Value, ValueKind, entities::ValueData, layout::BasicBlockNode, values::FuncArgRef,
 };
@@ -5,7 +7,7 @@ use koopa::ir::{
 use crate::asm::{
     expr::obtain_caller_directly_usable_register,
     inst::{self, InstContext},
-    meta::{self, FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm},
+    meta::{self, FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm, value_type_to_string},
 };
 
 impl ToAsm for ValueData {
@@ -103,6 +105,9 @@ pub fn create_block(
     let insts = node.insts();
     for &insts in insts.keys() {
         let inst_data = context.func_data.dfg().value(insts);
+        if meta::ASM_SHOW_IR.load(Ordering::Acquire) {
+            asms.push(RiscvAsm::Comment(value_type_to_string(inst_data.kind())));
+        }
         asms.extend(inst_data.to_asm(context, insts));
     }
     asms

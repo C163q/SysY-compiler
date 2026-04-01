@@ -2,6 +2,7 @@ use std::{
     env,
     fs::File,
     io::{BufWriter, Write},
+    sync::atomic::Ordering,
 };
 
 fn print_usage() {
@@ -51,15 +52,14 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
+    sysy_compiler::asm::meta::ASM_SHOW_IR.store(false, Ordering::Release);
+
     let ast =
         sysy_compiler::read_and_parse(args.input.as_ref()).inspect_err(|e| eprintln!("{}", e))?;
-    // println!("{}", ast);
-    // println!("{:#?}", ast);
     let memory_ir = sysy_compiler::ast_to_ir(ast);
     match args.mode.as_str() {
         "-koopa" => {
             let ir = memory_ir.get_ir()?;
-            // println!("{ir}");
             BufWriter::new(File::create(args.output)?).write_all(ir.as_bytes())?;
         }
         "-riscv" => {
