@@ -3,10 +3,8 @@ use std::num::NonZero;
 use koopa::ir::{FunctionData, Program, TypeKind, Value, ValueKind, values::FuncArgRef};
 
 use crate::asm::{
-    block,
-    expr::{get_value, obtain_caller_directly_usable_register},
-    inst,
-    meta::{self, FunctionContext, OffsetDataType, RV32Usize, RiscvAsm},
+    block, expr, inst,
+    meta::{self, FunctionContext, RV32Usize, RiscvAsm},
 };
 
 /// Create empty stack frame before calling this function.
@@ -44,7 +42,7 @@ pub fn build_call_stack_and_registers(
             );
         }
 
-        let reg = *get_value(*arg, context, &mut asms)
+        let reg = *expr::get_value(*arg, context, &mut asms)
             .iter()
             .next()
             .expect("Failed to get argument value register");
@@ -54,17 +52,15 @@ pub fn build_call_stack_and_registers(
             let mv = inst::mv_instruction(dest, reg, None);
             asms.push(mv);
         } else {
-            let size = arg_data.ty().size() as RV32Usize;
             context
                 .memory_mapper
-                .function_claim(*arg, OffsetDataType::Value, size);
+                .function_claim(*arg, arg_data.ty().clone());
             let offset = context
                 .memory_mapper
-                .get_offset(arg, size)
+                .get_offset(arg)
                 .expect("Failed to get argument stack offset, it may not exist");
-            assert_eq!(offset.ty(), OffsetDataType::Value);
 
-            let tmp = obtain_caller_directly_usable_register(context);
+            let tmp = expr::obtain_caller_directly_usable_register(context);
             let stores = inst::add_sw_instruction(
                 reg,
                 meta::Register::Sp,

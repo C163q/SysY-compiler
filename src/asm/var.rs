@@ -1,11 +1,11 @@
-use std::{cell::Ref, num::NonZero};
+use std::cell::Ref;
 
 use koopa::ir::{Program, Type, TypeKind, Value, ValueKind, entities::ValueData};
 
 use crate::asm::{
     expr,
     inst::{self, InstContext},
-    meta::{self, FunctionContext, OffsetDataType, RV32Imm, Register, RiscvAsm},
+    meta::{self, FunctionContext, RV32Imm, Register, RiscvAsm},
 };
 
 pub fn register_global_var(program: &Program) -> Vec<RiscvAsm> {
@@ -59,15 +59,12 @@ pub fn init_global_var(init_data: Ref<ValueData>, program: &Program) -> Vec<Risc
 
 pub struct LoadContext {
     pub id: Option<Value>,
-    pub ty: OffsetDataType,
+    pub ty: Type,
 }
 
 impl LoadContext {
-    pub fn new() -> Self {
-        Self {
-            id: None,
-            ty: OffsetDataType::Value,
-        }
+    pub fn new(ty: Type) -> Self {
+        Self { id: None, ty }
     }
 
     pub fn with_id(mut self, id: Value) -> Self {
@@ -75,15 +72,9 @@ impl LoadContext {
         self
     }
 
-    pub fn with_ty(mut self, ty: OffsetDataType) -> Self {
+    pub fn with_ty(mut self, ty: Type) -> Self {
         self.ty = ty;
         self
-    }
-}
-
-impl Default for LoadContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -103,84 +94,54 @@ pub fn load_from_local(
     src: Value,
     context: &mut FunctionContext,
     id: Option<Value>,
-    ty: OffsetDataType,
+    ty: Type,
 ) -> Result<(Vec<RiscvAsm>, Register), String> {
-    let size = context.func_data.dfg().value(src).ty().size() as u32;
     let mut asms = vec![];
 
     let rd = expr::obtain_caller_directly_usable_register(context);
     let offset = context
         .memory_mapper
-        .get_offset(&src, size)
+        .get_offset(&src)
         .ok_or(format!("Value {:?} is not mapped to stack memory", src))?;
 
-    match ty {
-        OffsetDataType::Value => {
-            const ONE_LEVEL: NonZero<u32> = NonZero::new(1).unwrap();
-            match offset.ty() {
-                OffsetDataType::Value => {
-                    asms.extend(inst::add_lw_instruction(
-                        rd,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        id.map(|v| InstContext::new(context, v)),
-                        Some(rd),
-                    ));
-                }
-                OffsetDataType::Ptr(ONE_LEVEL) => {
-                    asms.extend(inst::add_lw_instruction(
-                        rd,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        None,
-                        Some(rd),
-                    ));
-                    asms.push(inst::lw_instruction(
-                        rd,
-                        rd,
-                        0,
-                        id.map(|v| InstContext::new(context, v)),
-                    ));
-                }
-                OffsetDataType::Ptr(_) => {
-                    panic!("Expect a Value but got a pointer");
-                }
-            }
-        }
-        OffsetDataType::Ptr(level) => match offset.ty() {
-            OffsetDataType::Value => panic!("Cannot load a pointer from a value"),
-            OffsetDataType::Ptr(mem_level) => {
-                if mem_level == level {
-                    asms.extend(inst::add_lw_instruction(
-                        rd,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        id.map(|v| InstContext::new(context, v)),
-                        Some(rd),
-                    ));
-                } else if mem_level.checked_add(1).unwrap() == level {
-                    asms.extend(inst::add_lw_instruction(
-                        rd,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        None,
-                        Some(rd),
-                    ));
-                    asms.push(inst::lw_instruction(
-                        rd,
-                        rd,
-                        0,
-                        id.map(|v| InstContext::new(context, v)),
-                    ));
-                } else {
-                    panic!(
-                        "Cannot load a pointer of level {} from a pointer of level {}",
-                        level, mem_level
-                    );
-                }
-            }
-        },
+    let src_level = get_ptr_level(src, context);
+    let dst_level = get_ptr_level_from_ty(ty.kind().clone());
+
+    if dst_level != src_level && dst_level + 1 != src_level {
+        panic!(
+            "Cannot load a pointer of level {} from a pointer of level {}",
+            src_level, dst_level
+        );
     }
+
+    // For example, load i32 to i32 or load *i32 to *i32
+    if dst_level == src_level {
+        asms.extend(inst::add_lw_instruction(
+            rd,
+            Register::Sp,
+            RV32Imm::new(offset.offset() as i32),
+            id.map(|v| InstContext::new(context, v)),
+            Some(rd),
+        ));
+        return Ok((asms, rd));
+    }
+
+    // dst_level + 1 == src_level, for example, load *i32 to i32
+    // First dereference the pointer to get the address, then load the value from the address
+    asms.extend(inst::add_lw_instruction(
+        rd,
+        Register::Sp,
+        RV32Imm::new(offset.offset() as i32),
+        None,
+        Some(rd),
+    ));
+    asms.push(inst::lw_instruction(
+        rd,
+        rd,
+        0,
+        id.map(|v| InstContext::new(context, v)),
+    ));
+
     Ok((asms, rd))
 }
 
@@ -215,15 +176,15 @@ pub fn load_from_global(
 pub struct StoreContext {
     pub id: Option<Value>,
     pub claim: bool,
-    pub ty: OffsetDataType,
+    pub ty: Type,
 }
 
 impl StoreContext {
-    pub fn new() -> Self {
+    pub fn new(ty: Type) -> Self {
         Self {
             id: None,
             claim: false,
-            ty: OffsetDataType::Value,
+            ty,
         }
     }
 
@@ -237,15 +198,9 @@ impl StoreContext {
         self
     }
 
-    pub fn with_ty(mut self, ty: OffsetDataType) -> Self {
+    pub fn with_ty(mut self, ty: Type) -> Self {
         self.ty = ty;
         self
-    }
-}
-
-impl Default for StoreContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -292,88 +247,55 @@ pub fn store_to_local(
     context: &mut FunctionContext,
     id: Option<Value>,
     claim: bool,
-    ty: OffsetDataType,
+    ty: Type,
 ) -> Result<Vec<RiscvAsm>, String> {
     let mut asms = vec![];
     let tmp = expr::obtain_caller_directly_usable_register(context);
-    let size = context.func_data.dfg().value(target).ty().size() as meta::RV32Usize;
     if claim {
-        context.memory_mapper.stack_claim(target, ty, size);
+        context.memory_mapper.stack_claim(target, ty.clone());
     }
     let offset = context
         .memory_mapper
-        .get_offset(&target, size)
+        .get_offset(&target)
         .ok_or(format!("Value {:?} is not mapped to stack memory", target))?;
 
-    match ty {
-        OffsetDataType::Value => {
-            const ONE_LEVEL: NonZero<u32> = NonZero::new(1).unwrap();
-            match offset.ty() {
-                OffsetDataType::Value => {
-                    asms.extend(inst::add_sw_instruction(
-                        src,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        id.map(|v| InstContext::new(context, v)),
-                        Some(tmp),
-                    ));
-                }
-                OffsetDataType::Ptr(ONE_LEVEL) => {
-                    asms.extend(inst::add_lw_instruction(
-                        tmp,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        None,
-                        Some(tmp),
-                    ));
-                    asms.push(inst::sw_instruction(
-                        src,
-                        tmp,
-                        0,
-                        id.map(|v| InstContext::new(context, v)),
-                    ));
-                }
-                OffsetDataType::Ptr(mem_level) => panic!(
-                    "Unsupported pointer level: cannot store a value to a pointer of level {}",
-                    mem_level
-                ),
-            }
-        }
-        OffsetDataType::Ptr(level) => match offset.ty() {
-            OffsetDataType::Value => panic!("Cannot store a pointer to a value"),
-            OffsetDataType::Ptr(mem_level) => {
-                if mem_level == level {
-                    asms.extend(inst::add_sw_instruction(
-                        src,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        id.map(|v| InstContext::new(context, v)),
-                        Some(tmp),
-                    ));
-                } else if mem_level.checked_add(1).unwrap() == level {
-                    asms.extend(inst::add_lw_instruction(
-                        tmp,
-                        Register::Sp,
-                        RV32Imm::new(offset.offset() as i32),
-                        None,
-                        Some(tmp),
-                    ));
-                    asms.push(inst::sw_instruction(
-                        src,
-                        tmp,
-                        0,
-                        id.map(|v| InstContext::new(context, v)),
-                    ));
-                } else {
-                    panic!(
-                        "Unsupported pointer level: cannot store a pointer of level {} to a pointer of level {}",
-                        level, mem_level
-                    );
-                }
-            }
-        },
+    let src_level = get_ptr_level_from_ty(ty.kind().clone());
+    let dst_level = get_ptr_level(target, context);
+
+    if src_level != dst_level && src_level + 1 != dst_level {
+        panic!(
+            "Cannot store a pointer of level {} to a pointer of level {}",
+            src_level, dst_level
+        );
     }
 
+    // For example, store i32 to i32 or store *i32 to *i32
+    if src_level == dst_level {
+        asms.extend(inst::add_sw_instruction(
+            src,
+            Register::Sp,
+            RV32Imm::new(offset.offset() as i32),
+            id.map(|v| InstContext::new(context, v)),
+            Some(tmp),
+        ));
+        return Ok(asms);
+    }
+
+    // src_level + 1 == dst_level, for example, store i32 to *i32
+    // First dereference the pointer to get the address, then store the value to the address
+    asms.extend(inst::add_lw_instruction(
+        tmp,
+        Register::Sp,
+        RV32Imm::new(offset.offset() as i32),
+        None,
+        Some(tmp),
+    ));
+    asms.push(inst::sw_instruction(
+        src,
+        tmp,
+        0,
+        id.map(|v| InstContext::new(context, v)),
+    ));
     Ok(asms)
 }
 

@@ -5,9 +5,9 @@ use koopa::ir::{
 };
 
 use crate::asm::{
-    expr::obtain_caller_directly_usable_register,
+    expr,
     inst::{self, InstContext},
-    meta::{self, FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm, value_type_to_string},
+    meta::{self, FunctionContext, Register, RegisterValue, RiscvAsm, ToAsm},
 };
 
 impl ToAsm for ValueData {
@@ -80,7 +80,7 @@ impl ToAsm for FuncArgRef {
                 vec![]
             }
             meta::ArgLocation::Stack(offset) => {
-                let reg = obtain_caller_directly_usable_register(context);
+                let reg = expr::obtain_caller_directly_usable_register(context);
                 inst::add_lw_instruction(
                     reg,
                     Register::Sp,
@@ -106,7 +106,9 @@ pub fn create_block(
     for &insts in insts.keys() {
         let inst_data = context.func_data.dfg().value(insts);
         if meta::ASM_SHOW_IR.load(Ordering::Acquire) {
-            asms.push(RiscvAsm::Comment(value_type_to_string(inst_data.kind())));
+            asms.push(RiscvAsm::Comment(meta::value_type_to_string(
+                inst_data.kind(),
+            )));
         }
         asms.extend(inst_data.to_asm(context, insts));
     }

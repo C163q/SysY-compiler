@@ -6,7 +6,7 @@ use std::{
     sync::atomic::AtomicBool,
 };
 
-use koopa::ir::{BasicBlock, FunctionData, Program, Value, ValueKind, values::FuncArgRef};
+use koopa::ir::{BasicBlock, FunctionData, Program, Type, Value, ValueKind, values::FuncArgRef};
 
 use crate::asm::inst;
 
@@ -424,29 +424,14 @@ impl StackSizeCalculator {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OffsetDataType {
-    Value,
-    Ptr(NonZero<u32>),
-}
-
-impl From<u32> for OffsetDataType {
-    fn from(value: u32) -> Self {
-        match value {
-            0 => OffsetDataType::Value,
-            level => OffsetDataType::Ptr(NonZero::new(level).unwrap()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct OffsetData {
     pub offset: RV32Usize,
-    pub ty: OffsetDataType,
+    pub ty: Type,
 }
 
 impl OffsetData {
-    pub fn new(offset: RV32Usize, ty: OffsetDataType) -> Self {
+    pub fn new(offset: RV32Usize, ty: Type) -> Self {
         OffsetData { offset, ty }
     }
 
@@ -454,8 +439,8 @@ impl OffsetData {
         self.offset
     }
 
-    pub fn ty(&self) -> OffsetDataType {
-        self.ty
+    pub fn ty(&self) -> &Type {
+        &self.ty
     }
 }
 
@@ -613,7 +598,8 @@ impl StackSizeAllocator {
 
     /// [`StackSizeAllocator::claim`] helps to register the offset of a value in the stack. The
     /// offset is determined when claiming, and will not change.
-    pub fn claim(&mut self, value: Value, ty: OffsetDataType, size: RV32Usize) {
+    pub fn claim(&mut self, value: Value, ty: Type) {
+        let size = ty.size() as RV32Usize;
         if !self.map.contains_key(&value) {
             if self.claimed + size + self.meta_size() > self.size() {
                 panic!(
@@ -630,8 +616,9 @@ impl StackSizeAllocator {
         }
     }
 
-    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<OffsetData> {
-        self.map.get(value).copied().inspect(|&offset| {
+    pub fn get_offset(&self, value: &Value) -> Option<OffsetData> {
+        self.map.get(value).cloned().inspect(|offset| {
+            let size = offset.ty().size() as RV32Usize;
             if offset.offset() + size + self.meta_size > self.size() {
                 panic!(
                     "Offset {} and the size for value {:?} exceeds claimed stack size {} (with meta size {})",
@@ -813,19 +800,19 @@ impl MemoryMapper {
             .reserve(size);
     }
 
-    pub fn stack_claim(&mut self, value: Value, ty: OffsetDataType, size: RV32Usize) {
-        self.stack_allocator.claim(value, ty, size);
+    pub fn stack_claim(&mut self, value: Value, ty: Type) {
+        self.stack_allocator.claim(value, ty);
     }
 
     pub fn stack_unclaim(&mut self, value: Value) {
         self.stack_allocator.map.remove(&value);
     }
 
-    pub fn function_claim(&mut self, value: Value, ty: OffsetDataType, size: RV32Usize) {
+    pub fn function_claim(&mut self, value: Value, ty: Type) {
         self.caller_stack
             .last_mut()
             .expect("Caller stack should not be empty when claiming function stack")
-            .claim(value, ty, size);
+            .claim(value, ty);
     }
 
     pub fn stack_alloc_size(&self) -> RV32Usize {
@@ -856,22 +843,22 @@ impl MemoryMapper {
         self.stack_calculated_size() + self.function_calculated_size()
     }
 
-    pub fn get_offset(&self, value: &Value, size: RV32Usize) -> Option<OffsetData> {
+    pub fn get_offset(&self, value: &Value) -> Option<OffsetData> {
         let mut offset = 0;
         self.caller_stack
             .iter()
             .rev()
             .find_map(|stack| {
                 let res = stack
-                    .get_offset(value, size)
-                    .map(|off| OffsetData::new(off.offset() + offset, off.ty()));
+                    .get_offset(value)
+                    .map(|off| OffsetData::new(off.offset() + offset, off.ty().clone()));
                 offset += stack.size();
                 res
             })
             .or(self
                 .stack_allocator
-                .get_offset(value, size)
-                .map(|off| OffsetData::new(offset + off.offset(), off.ty())))
+                .get_offset(value)
+                .map(|off| OffsetData::new(offset + off.offset(), off.ty().clone())))
     }
 
     pub fn meta_offset(&self) -> RV32Usize {
