@@ -1,0 +1,273 @@
+global @n = alloc i32, zeroinit
+
+decl @getint(): i32
+
+decl @getch(): i32
+
+decl @getarray(*i32): i32
+
+decl @putint(i32)
+
+decl @putch(i32)
+
+decl @putarray(i32, *i32)
+
+decl @starttime()
+
+decl @stoptime()
+
+fun @swap(@array: *i32, @i: i32, @j: i32): i32 {
+%entry:
+  %0 = alloc *i32
+  store @array, %0
+  %1 = alloc i32
+  store @i, %1
+  %2 = alloc i32
+  store @j, %2
+  %3 = alloc i32
+  %4 = load %1
+  %5 = load %0
+  %6 = getptr %5, %4
+  %7 = load %6
+  store %7, %3
+  %8 = load %2
+  %9 = load %0
+  %10 = getptr %9, %8
+  %11 = load %10
+  %12 = load %1
+  %13 = load %0
+  %14 = getptr %13, %12
+  store %11, %14
+  %15 = load %3
+  %16 = load %2
+  %17 = load %0
+  %18 = getptr %17, %16
+  store %15, %18
+  ret 0
+}
+
+fun @heap_ajust(@arr: *i32, @start: i32, @end: i32): i32 {
+%entry:
+  %19 = alloc *i32
+  store @arr, %19
+  %20 = alloc i32
+  store @start, %20
+  %21 = alloc i32
+  store @end, %21
+  %22 = alloc i32
+  %23 = load %20
+  store %23, %22
+  %24 = alloc i32
+  %25 = load %22
+  %26 = mul %25, 2
+  %27 = add %26, 1
+  store %27, %24
+  jump %28
+
+%28:
+  %29 = load %24
+  %30 = load %21
+  %31 = add %30, 1
+  %32 = lt %29, %31
+  br %32, %33, %34
+
+%33:
+  %land1 = alloc i32
+  store 0, %land1
+  %35 = load %24
+  %36 = load %21
+  %37 = lt %35, %36
+  %38 = ne %37, 0
+  br %38, %39, %40
+
+%39:
+  %41 = load %24
+  %42 = load %19
+  %43 = getptr %42, %41
+  %44 = load %43
+  %45 = load %24
+  %46 = add %45, 1
+  %47 = load %19
+  %48 = getptr %47, %46
+  %49 = load %48
+  %50 = lt %44, %49
+  %51 = ne %50, 0
+  store %51, %land1
+  jump %40
+
+%40:
+  %52 = load %land1
+  br %52, %53, %54
+
+%53:
+  %55 = load %24
+  %56 = add %55, 1
+  store %56, %24
+  jump %54
+
+%54:
+  %57 = load %22
+  %58 = load %19
+  %59 = getptr %58, %57
+  %60 = load %59
+  %61 = load %24
+  %62 = load %19
+  %63 = getptr %62, %61
+  %64 = load %63
+  %65 = gt %60, %64
+  br %65, %66, %67
+
+%66:
+  ret 0
+
+%68:
+  jump %69
+
+%67:
+  %70 = load %19
+  %71 = load %22
+  %72 = load %24
+  %73 = call @swap(%70, %71, %72)
+  store %73, %22
+  %74 = load %24
+  store %74, %22
+  %75 = load %22
+  %76 = mul %75, 2
+  %77 = add %76, 1
+  store %77, %24
+  jump %69
+
+%69:
+  jump %28
+
+%34:
+  ret 0
+}
+
+fun @heap_sort(@arr: *i32, @len: i32): i32 {
+%entry:
+  %78 = alloc *i32
+  store @arr, %78
+  %79 = alloc i32
+  store @len, %79
+  %80 = alloc i32
+  %81 = alloc i32
+  %82 = load %79
+  %83 = div %82, 2
+  %84 = sub %83, 1
+  store %84, %80
+  jump %85
+
+%85:
+  %86 = load %80
+  %87 = sub 0, 1
+  %88 = gt %86, %87
+  br %88, %89, %90
+
+%89:
+  %91 = load %79
+  %92 = sub %91, 1
+  store %92, %81
+  %93 = load %78
+  %94 = load %80
+  %95 = load %81
+  %96 = call @heap_ajust(%93, %94, %95)
+  store %96, %81
+  %97 = load %80
+  %98 = sub %97, 1
+  store %98, %80
+  jump %85
+
+%90:
+  %99 = load %79
+  %100 = sub %99, 1
+  store %100, %80
+  jump %101
+
+%101:
+  %102 = load %80
+  %103 = gt %102, 0
+  br %103, %104, %105
+
+%104:
+  %106 = alloc i32
+  store 0, %106
+  %107 = load %78
+  %108 = load %106
+  %109 = load %80
+  %110 = call @swap(%107, %108, %109)
+  store %110, %81
+  %111 = load %80
+  %112 = sub %111, 1
+  store %112, %81
+  %113 = load %78
+  %114 = load %106
+  %115 = load %81
+  %116 = call @heap_ajust(%113, %114, %115)
+  store %116, %81
+  %117 = load %80
+  %118 = sub %117, 1
+  store %118, %80
+  jump %101
+
+%105:
+  ret 0
+}
+
+fun @main(): i32 {
+%entry:
+  store 10, @n
+  %119 = alloc [i32, 10]
+  %120 = getelemptr %119, 0
+  store 4, %120
+  %121 = getelemptr %119, 1
+  store 3, %121
+  %122 = getelemptr %119, 2
+  store 9, %122
+  %123 = getelemptr %119, 3
+  store 2, %123
+  %124 = getelemptr %119, 4
+  store 0, %124
+  %125 = getelemptr %119, 5
+  store 1, %125
+  %126 = getelemptr %119, 6
+  store 6, %126
+  %127 = getelemptr %119, 7
+  store 5, %127
+  %128 = getelemptr %119, 8
+  store 7, %128
+  %129 = getelemptr %119, 9
+  store 8, %129
+  %130 = alloc i32
+  store 0, %130
+  %131 = getelemptr %119, 0
+  %132 = load @n
+  %133 = call @heap_sort(%131, %132)
+  store %133, %130
+  jump %134
+
+%134:
+  %135 = load %130
+  %136 = load @n
+  %137 = lt %135, %136
+  br %137, %138, %139
+
+%138:
+  %140 = alloc i32
+  %141 = load %130
+  %142 = getelemptr %119, %141
+  %143 = load %142
+  store %143, %140
+  %144 = load %140
+  call @putint(%144)
+  store 10, %140
+  %145 = load %140
+  call @putch(%145)
+  %146 = load %130
+  %147 = add %146, 1
+  store %147, %130
+  jump %134
+
+%139:
+  ret 0
+}

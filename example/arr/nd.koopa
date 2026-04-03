@@ -1,0 +1,350 @@
+decl @getint(): i32
+
+decl @getch(): i32
+
+decl @getarray(*i32): i32
+
+decl @putint(i32)
+
+decl @putch(i32)
+
+decl @putarray(i32, *i32)
+
+decl @starttime()
+
+decl @stoptime()
+
+fun @main(): i32 {
+%entry:
+  %0 = alloc [[i32, 3], 5]
+  %1 = alloc [[i32, 3], 5]
+  %2 = getelemptr %1, 0
+  %3 = getelemptr %2, 0
+  store zeroinit, %3
+  %4 = getelemptr %1, 0
+  %5 = getelemptr %4, 1
+  store zeroinit, %5
+  %6 = getelemptr %1, 0
+  %7 = getelemptr %6, 2
+  store zeroinit, %7
+  %8 = getelemptr %1, 1
+  %9 = getelemptr %8, 0
+  store zeroinit, %9
+  %10 = getelemptr %1, 1
+  %11 = getelemptr %10, 1
+  store zeroinit, %11
+  %12 = getelemptr %1, 1
+  %13 = getelemptr %12, 2
+  store zeroinit, %13
+  %14 = getelemptr %1, 2
+  %15 = getelemptr %14, 0
+  store zeroinit, %15
+  %16 = getelemptr %1, 2
+  %17 = getelemptr %16, 1
+  store zeroinit, %17
+  %18 = getelemptr %1, 2
+  %19 = getelemptr %18, 2
+  store zeroinit, %19
+  %20 = getelemptr %1, 3
+  %21 = getelemptr %20, 0
+  store zeroinit, %21
+  %22 = getelemptr %1, 3
+  %23 = getelemptr %22, 1
+  store zeroinit, %23
+  %24 = getelemptr %1, 3
+  %25 = getelemptr %24, 2
+  store zeroinit, %25
+  %26 = getelemptr %1, 4
+  %27 = getelemptr %26, 0
+  store zeroinit, %27
+  %28 = getelemptr %1, 4
+  %29 = getelemptr %28, 1
+  store zeroinit, %29
+  %30 = getelemptr %1, 4
+  %31 = getelemptr %30, 2
+  store zeroinit, %31
+  %32 = alloc [[i32, 3], 5]
+  %33 = getelemptr %32, 0
+  %34 = getelemptr %33, 0
+  store 1, %34
+  %35 = getelemptr %32, 0
+  %36 = getelemptr %35, 1
+  store 2, %36
+  %37 = getelemptr %32, 0
+  %38 = getelemptr %37, 2
+  store 3, %38
+  %39 = getelemptr %32, 1
+  %40 = getelemptr %39, 0
+  store 4, %40
+  %41 = getelemptr %32, 1
+  %42 = getelemptr %41, 1
+  store 5, %42
+  %43 = getelemptr %32, 1
+  %44 = getelemptr %43, 2
+  store 6, %44
+  %45 = getelemptr %32, 2
+  %46 = getelemptr %45, 0
+  store 7, %46
+  %47 = getelemptr %32, 2
+  %48 = getelemptr %47, 1
+  store 8, %48
+  %49 = getelemptr %32, 2
+  %50 = getelemptr %49, 2
+  store 9, %50
+  %51 = getelemptr %32, 3
+  %52 = getelemptr %51, 0
+  store 10, %52
+  %53 = getelemptr %32, 3
+  %54 = getelemptr %53, 1
+  store 11, %54
+  %55 = getelemptr %32, 3
+  %56 = getelemptr %55, 2
+  store 12, %56
+  %57 = getelemptr %32, 4
+  %58 = getelemptr %57, 0
+  store 13, %58
+  %59 = getelemptr %32, 4
+  %60 = getelemptr %59, 1
+  store 14, %60
+  %61 = getelemptr %32, 4
+  %62 = getelemptr %61, 2
+  store 15, %62
+  %63 = alloc [[i32, 3], 5]
+  %64 = getelemptr %63, 0
+  %65 = getelemptr %64, 0
+  store 1, %65
+  %66 = getelemptr %63, 0
+  %67 = getelemptr %66, 1
+  store 2, %67
+  %68 = getelemptr %63, 0
+  %69 = getelemptr %68, 2
+  store 3, %69
+  %70 = getelemptr %63, 1
+  %71 = getelemptr %70, 0
+  store 4, %71
+  %72 = getelemptr %63, 1
+  %73 = getelemptr %72, 1
+  store 5, %73
+  %74 = getelemptr %63, 1
+  %75 = getelemptr %74, 2
+  store 6, %75
+  %76 = getelemptr %63, 2
+  %77 = getelemptr %76, 0
+  store 7, %77
+  %78 = getelemptr %63, 2
+  %79 = getelemptr %78, 1
+  store 8, %79
+  %80 = getelemptr %63, 2
+  %81 = getelemptr %80, 2
+  store 9, %81
+  %82 = getelemptr %63, 3
+  %83 = getelemptr %82, 0
+  store 10, %83
+  %84 = getelemptr %63, 3
+  %85 = getelemptr %84, 1
+  store 11, %85
+  %86 = getelemptr %63, 3
+  %87 = getelemptr %86, 2
+  store 12, %87
+  %88 = getelemptr %63, 4
+  %89 = getelemptr %88, 0
+  store 13, %89
+  %90 = getelemptr %63, 4
+  %91 = getelemptr %90, 1
+  store 14, %91
+  %92 = getelemptr %63, 4
+  %93 = getelemptr %92, 2
+  store 15, %93
+  %94 = alloc [[i32, 3], 5]
+  %95 = getelemptr %94, 0
+  %96 = getelemptr %95, 0
+  store 1, %96
+  %97 = getelemptr %94, 0
+  %98 = getelemptr %97, 1
+  store 2, %98
+  %99 = getelemptr %94, 0
+  %100 = getelemptr %99, 2
+  store 3, %100
+  %101 = getelemptr %94, 1
+  %102 = getelemptr %101, 0
+  store 4, %102
+  %103 = getelemptr %94, 1
+  %104 = getelemptr %103, 1
+  store 5, %104
+  %105 = getelemptr %94, 1
+  %106 = getelemptr %105, 2
+  store 6, %106
+  %107 = getelemptr %94, 2
+  %108 = getelemptr %107, 0
+  store 7, %108
+  %109 = getelemptr %94, 2
+  %110 = getelemptr %109, 1
+  store 8, %110
+  %111 = getelemptr %94, 2
+  %112 = getelemptr %111, 2
+  store 9, %112
+  %113 = getelemptr %94, 3
+  %114 = getelemptr %113, 0
+  store 10, %114
+  %115 = getelemptr %94, 3
+  %116 = getelemptr %115, 1
+  store 11, %116
+  %117 = getelemptr %94, 3
+  %118 = getelemptr %117, 2
+  store 12, %118
+  %119 = getelemptr %94, 4
+  %120 = getelemptr %119, 0
+  store 13, %120
+  %121 = getelemptr %94, 4
+  %122 = getelemptr %121, 1
+  store 14, %122
+  %123 = getelemptr %94, 4
+  %124 = getelemptr %123, 2
+  store 15, %124
+  %125 = alloc [i32, 5]
+  %126 = alloc [[i32, 3], 5]
+  %127 = getelemptr %126, 0
+  %128 = getelemptr %127, 0
+  store 1, %128
+  %129 = getelemptr %126, 0
+  %130 = getelemptr %129, 1
+  store 2, %130
+  %131 = getelemptr %126, 0
+  %132 = getelemptr %131, 2
+  store 3, %132
+  %133 = getelemptr %126, 1
+  %134 = getelemptr %133, 0
+  store 4, %134
+  %135 = getelemptr %126, 1
+  %136 = getelemptr %135, 1
+  store zeroinit, %136
+  %137 = getelemptr %126, 1
+  %138 = getelemptr %137, 2
+  store zeroinit, %138
+  %139 = getelemptr %126, 2
+  %140 = getelemptr %139, 0
+  store 7, %140
+  %141 = getelemptr %126, 2
+  %142 = getelemptr %141, 1
+  store zeroinit, %142
+  %143 = getelemptr %126, 2
+  %144 = getelemptr %143, 2
+  store zeroinit, %144
+  %145 = getelemptr %126, 3
+  %146 = getelemptr %145, 0
+  store 10, %146
+  %147 = getelemptr %126, 3
+  %148 = getelemptr %147, 1
+  store 11, %148
+  %149 = getelemptr %126, 3
+  %150 = getelemptr %149, 2
+  store 12, %150
+  %151 = getelemptr %126, 4
+  %152 = getelemptr %151, 0
+  store zeroinit, %152
+  %153 = getelemptr %126, 4
+  %154 = getelemptr %153, 1
+  store zeroinit, %154
+  %155 = getelemptr %126, 4
+  %156 = getelemptr %155, 2
+  store zeroinit, %156
+  %157 = alloc [i32, 3]
+  %158 = alloc [[[i32, 4], 3], 2]
+  %159 = getelemptr %158, 0
+  %160 = getelemptr %159, 0
+  %161 = getelemptr %160, 0
+  store 1, %161
+  %162 = getelemptr %158, 0
+  %163 = getelemptr %162, 0
+  %164 = getelemptr %163, 1
+  store 2, %164
+  %165 = getelemptr %158, 0
+  %166 = getelemptr %165, 0
+  %167 = getelemptr %166, 2
+  store 3, %167
+  %168 = getelemptr %158, 0
+  %169 = getelemptr %168, 0
+  %170 = getelemptr %169, 3
+  store 4, %170
+  %171 = getelemptr %158, 0
+  %172 = getelemptr %171, 1
+  %173 = getelemptr %172, 0
+  store 5, %173
+  %174 = getelemptr %158, 0
+  %175 = getelemptr %174, 1
+  %176 = getelemptr %175, 1
+  store zeroinit, %176
+  %177 = getelemptr %158, 0
+  %178 = getelemptr %177, 1
+  %179 = getelemptr %178, 2
+  store zeroinit, %179
+  %180 = getelemptr %158, 0
+  %181 = getelemptr %180, 1
+  %182 = getelemptr %181, 3
+  store zeroinit, %182
+  %183 = getelemptr %158, 0
+  %184 = getelemptr %183, 2
+  %185 = getelemptr %184, 0
+  store zeroinit, %185
+  %186 = getelemptr %158, 0
+  %187 = getelemptr %186, 2
+  %188 = getelemptr %187, 1
+  store zeroinit, %188
+  %189 = getelemptr %158, 0
+  %190 = getelemptr %189, 2
+  %191 = getelemptr %190, 2
+  store zeroinit, %191
+  %192 = getelemptr %158, 0
+  %193 = getelemptr %192, 2
+  %194 = getelemptr %193, 3
+  store zeroinit, %194
+  %195 = getelemptr %158, 1
+  %196 = getelemptr %195, 0
+  %197 = getelemptr %196, 0
+  store zeroinit, %197
+  %198 = getelemptr %158, 1
+  %199 = getelemptr %198, 0
+  %200 = getelemptr %199, 1
+  store zeroinit, %200
+  %201 = getelemptr %158, 1
+  %202 = getelemptr %201, 0
+  %203 = getelemptr %202, 2
+  store zeroinit, %203
+  %204 = getelemptr %158, 1
+  %205 = getelemptr %204, 0
+  %206 = getelemptr %205, 3
+  store zeroinit, %206
+  %207 = getelemptr %158, 1
+  %208 = getelemptr %207, 1
+  %209 = getelemptr %208, 0
+  store zeroinit, %209
+  %210 = getelemptr %158, 1
+  %211 = getelemptr %210, 1
+  %212 = getelemptr %211, 1
+  store zeroinit, %212
+  %213 = getelemptr %158, 1
+  %214 = getelemptr %213, 1
+  %215 = getelemptr %214, 2
+  store zeroinit, %215
+  %216 = getelemptr %158, 1
+  %217 = getelemptr %216, 1
+  %218 = getelemptr %217, 3
+  store zeroinit, %218
+  %219 = getelemptr %158, 1
+  %220 = getelemptr %219, 2
+  %221 = getelemptr %220, 0
+  store zeroinit, %221
+  %222 = getelemptr %158, 1
+  %223 = getelemptr %222, 2
+  %224 = getelemptr %223, 1
+  store zeroinit, %224
+  %225 = getelemptr %158, 1
+  %226 = getelemptr %225, 2
+  %227 = getelemptr %226, 2
+  store zeroinit, %227
+  %228 = getelemptr %158, 1
+  %229 = getelemptr %228, 2
+  %230 = getelemptr %229, 3
+  store zeroinit, %230
+  ret 4
+}
