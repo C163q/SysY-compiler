@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::iter;
 
 use koopa::ir::entities::ValueData;
-use koopa::ir::values::{Alloc, Branch, Call, GetElemPtr, Integer, Jump, Store};
+use koopa::ir::values::{Alloc, Branch, Call, GetElemPtr, GetPtr, Integer, Jump, Store};
 use koopa::ir::{BinaryOp as KBinaryOp, TypeKind, ValueKind};
 use koopa::ir::{
     Value,
@@ -637,10 +637,7 @@ impl ToAsm for GetElemPtr {
         let mut asms = vec![];
         let level = var::get_ptr_level(self.src(), context);
 
-        assert!(
-            level > 1,
-            "Try to get element pointer of a non-array value"
-        );
+        assert!(level > 1, "Try to get element pointer of a non-array value");
         let (rd, vec) =
             get_elem_ptr_offset(self.src(), self.index(), context, id).unwrap_or_else(|err| {
                 panic!(
@@ -653,8 +650,116 @@ impl ToAsm for GetElemPtr {
 
         asms.extend(vec);
         asms.extend(
-            // FIXME: store ptr
-            // NOTE: only support 1-dim array for now.
+            var::store(
+                rd,
+                id,
+                context,
+                // GetElemPtr: *[i32, N] -> *i32
+                StoreContext::new(indexed_ty).with_id(id).with_claim(true),
+            )
+            .expect("Error occurs when trying to store get_elem_ptr result to stack"),
+        );
+
+        context.register_mapper.remove(id, rd);
+
+        asms
+    }
+}
+
+fn get_ptr_offset(
+    src: Value,
+    index: Value,
+    context: &mut FunctionContext,
+    id: Value,
+) -> Result<(Register, Vec<RiscvAsm>), String> {
+    let mut asms = vec![];
+    let (rd, elem_ty) = if src.is_global() {
+        let data = context.program.borrow_value(src);
+
+        let rd = expr::obtain_caller_directly_usable_register(context);
+        asms.push(inst::la_instruction(
+            rd,
+            &data
+                .name()
+                .as_ref()
+                .ok_or("Global variable should have a name")?[1..],
+            Some(InstContext::new(context, id)),
+        ));
+
+        let elem_ty = match data.ty().kind() {
+            TypeKind::Pointer(ty) => ty,
+            _ => unreachable!(),
+        };
+
+        (rd, elem_ty.clone())
+    } else {
+        let data = context.func_data.dfg().value(src);
+        let offset = context
+            .memory_mapper
+            .get_offset(&src)
+            .ok_or(format!("Value {:?} is not mapped to stack memory", src))?;
+
+        let rd = expr::obtain_caller_directly_usable_register(context);
+        asms.extend(inst::addi_or_add_instruction(
+            rd,
+            Register::Sp,
+            RV32Imm::Num(offset.offset() as i32),
+            Some(InstContext::new(context, id)),
+            Some(rd),
+        ));
+        asms.push(inst::lw_instruction(
+            rd,
+            rd,
+            0,
+            Some(InstContext::new(context, id)),
+        ));
+
+        let elem_ty = match data.ty().kind() {
+            TypeKind::Pointer(ty) => ty,
+            _ => unreachable!(),
+        };
+
+        (rd, elem_ty.clone())
+    };
+
+    let index_rd = *get_value(index, context, &mut asms)
+        .iter()
+        .next()
+        .expect("No register assigned for branch condition");
+
+    let base_rd = expr::obtain_caller_directly_usable_register(context);
+    asms.push(inst::li_instruction(base_rd, elem_ty.size() as i32, None));
+    asms.push(inst::mul_instruction(base_rd, index_rd, base_rd, None));
+    asms.push(inst::add_instruction(
+        rd,
+        rd,
+        base_rd,
+        Some(InstContext::new(context, id)),
+    ));
+
+    // index_rd is no longer needed after calculating the offset
+    context.register_mapper.remove(index, index_rd);
+
+    Ok((rd, asms))
+}
+
+impl ToAsm for GetPtr {
+    fn to_asm(&self, context: &mut FunctionContext<'_>, id: Value) -> Vec<RiscvAsm> {
+        // *i32 -> *i32, *[i32, 3] -> *[i32, 3], etc.
+        let mut asms = vec![];
+        let level = var::get_ptr_level(self.src(), context);
+
+        assert!(level > 0, "Try to get pointer of a non-pointer value");
+
+        let (rd, vec) =
+            get_ptr_offset(self.src(), self.index(), context, id).unwrap_or_else(|err| {
+                panic!("Error occurs when trying to get pointer offset: {}", err)
+            });
+
+        let indexed_ty = var::get_value_ty(id, context);
+
+        asms.extend(vec);
+        asms.extend(
             var::store(
                 rd,
                 id,

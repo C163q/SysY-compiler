@@ -53,6 +53,9 @@ impl ToAsm for ValueData {
             ValueKind::GetElemPtr(get_elem_ptr) => {
                 asms.extend(get_elem_ptr.to_asm(context, id));
             }
+            ValueKind::GetPtr(get_ptr) => {
+                asms.extend(get_ptr.to_asm(context, id));
+            }
             ValueKind::ZeroInit(_) => {
                 context
                     .register_mapper

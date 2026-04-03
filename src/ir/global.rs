@@ -46,13 +46,13 @@ fn global_decl_const_ir(
                         normal_global_arr_to_aggregate(&arr, level, &mut elems, program, manager);
                         program.new_value().aggregate(elems)
                     }
-                    ast::InitVal::ZeroInit(_) => program.new_value().zero_init(arr_ty),
+                    ast::InitVal::ZeroInit(_) => program.new_value().zero_init(arr_ty.clone()),
                 };
 
                 let value = program.new_value().global_alloc(init);
                 program.set_value_name(value, Some(format!("@{}", ident)));
                 manager
-                    .define_const(ident, ConstValue::Array(value))
+                    .define_const(ident, ConstValue::Array(value, arr_ty))
                     .unwrap_or_else(|e| panic!("Error defining constant: {}", e));
             }
         };

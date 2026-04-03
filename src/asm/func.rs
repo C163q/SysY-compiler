@@ -145,7 +145,8 @@ pub fn function_prologue(context: &mut FunctionContext) -> Vec<RiscvAsm> {
                 | ValueKind::Store(_)
                 | ValueKind::Binary(_)
                 | ValueKind::Call(_)
-                | ValueKind::GetElemPtr(_) => {
+                | ValueKind::GetElemPtr(_)
+                | ValueKind::GetPtr(_) => {
                     context.memory_mapper.stack_reserve(ty.size() as RV32Usize)
                 }
                 ValueKind::FuncArgRef(func_arg) => {

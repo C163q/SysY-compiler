@@ -135,17 +135,32 @@ impl Display for FuncFParams {
 pub struct FuncFParam {
     pub ty: BType,
     pub ident: String,
+    pub arr: Option<Vec<InitExpr>>,
 }
 
 impl FuncFParam {
-    pub fn new(ty: BType, ident: String) -> Self {
-        Self { ty, ident }
+    pub fn new(ty: BType, ident: String, arr: Option<Vec<InitExpr>>) -> Self {
+        assert!(
+            arr.as_ref()
+                .is_none_or(|v| v.iter().all(|expr| expr.is_const))
+        );
+        Self { ty, ident, arr }
     }
 }
 
 impl Display for FuncFParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.ty, self.ident)
+        write!(f, "{} {}", self.ty, self.ident)?;
+        match &self.arr {
+            Some(arr) => {
+                write!(f, "[]")?;
+                for size in arr {
+                    write!(f, "[{}]", size)?;
+                }
+            }
+            None => write!(f, "")?,
+        }
+        Ok(())
     }
 }
 

@@ -85,7 +85,7 @@ pub enum ConstValue {
     Int(i32),
     /// Const evaluation of array literals is not supported, but we still want to represent them as
     /// constants in the IR.
-    Array(Value),
+    Array(Value, Type),
     Function(Function),
 }
 

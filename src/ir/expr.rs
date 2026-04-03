@@ -362,7 +362,7 @@ impl IntoIr for ast::FuncCall {
         {
             Variable::Var(_) => panic!("'{}' is not a function", self.ident),
             Variable::Const(val) => match val {
-                ConstValue::Int(_) | ConstValue::Array(_) => {
+                ConstValue::Int(_) | ConstValue::Array(_, _) => {
                     panic!("'{}' is not a function", self.ident)
                 }
                 ConstValue::Function(func) => *func,
@@ -396,22 +396,43 @@ fn ident_lval_ir(
 ) {
     match manager.get(&ident) {
         Some(var) => match var {
-            // 若为常量，直接取得其常量值且不产生对应IR。
+            // Constant
             Variable::Const(val) => match val {
+                // i32 can be constantly evaluated
                 ConstValue::Int(val) => last_inst_vec(flows)
                     .push(Instruction::new(dfg.new_value().integer(*val), false)),
                 ConstValue::Function(_) => {
                     panic!("Function '{}' cannot be used as a value", ident)
                 }
-                ConstValue::Array(value) => {
-                    let load = dfg.new_value().load(*value);
-                    last_inst_vec(flows).push(Instruction::new(load, true))
+                ConstValue::Array(value, _) => {
+                    let zero = dfg.new_value().integer(0);
+                    let load = dfg.new_value().get_elem_ptr(*value, zero);
+                    last_inst_vec(flows)
+                        .extend([Instruction::new(zero, false), Instruction::new(load, true)])
                 }
             },
-            // 若为变量，产生load指令来取得其值。
+            // Variable
             Variable::Var(var) => {
-                let load = dfg.new_value().load(*var.value());
-                last_inst_vec(flows).push(Instruction::new(load, true))
+                // If var is arr, `var.ty()` return Types like `[i32, size]`.
+                // Note that the real type of var.value() is a pointer to the var.ty(). That is why
+                // we need to use `load` or `get_elem_ptr`.
+                let ty = var.ty().kind();
+                match ty {
+                    TypeKind::Array(_, _) => {
+                        // For array variable, we need to get a pointer to the first element of the
+                        // array, which is equivalent to the address of the array.
+                        let zero = dfg.new_value().integer(0);
+                        // *[i32, size] -> *i32
+                        let load = dfg.new_value().get_elem_ptr(*var.value(), zero);
+                        last_inst_vec(flows)
+                            .extend([Instruction::new(zero, false), Instruction::new(load, true)])
+                    }
+                    TypeKind::Int32 | TypeKind::Pointer(_) => {
+                        let load = dfg.new_value().load(*var.value());
+                        last_inst_vec(flows).push(Instruction::new(load, true))
+                    }
+                    _ => panic!("Variable '{}' has unsupported type", ident),
+                }
             }
         },
         None => panic!("Variable '{}' not defined", ident),
@@ -420,43 +441,110 @@ fn ident_lval_ir(
 
 fn array_lval_ir(
     ident: String,
-    index: Vec<ast::Expr>,
+    mut index: Vec<ast::Expr>,
     dfg: &mut DataFlowGraph,
     manager: &mut VariableManager,
     flows: &mut Vec<BlockFlow>,
 ) {
+    assert!(
+        !index.is_empty(),
+        "Array access must have at least one index"
+    );
     match manager.get(&ident) {
         Some(var) => match var {
             Variable::Const(val) => match val {
                 ConstValue::Int(_) | ConstValue::Function(_) => {
                     panic!("'{}' is not an array", ident)
                 }
-                ConstValue::Array(value) => {
+                ConstValue::Array(value, ty) => {
+                    // @arr: *[[i32, 2], 3]
+                    // arr[1] -> *[i32, 2]
                     let mut ptr = *value;
+                    let mut ty = ty.clone();
                     for idx in index {
+                        ty = match ty.kind() {
+                            TypeKind::Array(elem_ty, _) => elem_ty.clone(),
+                            TypeKind::Pointer(elem_ty) => elem_ty.clone(),
+                            _ => panic!("Array or pointer type expected, but got {:?}", ty),
+                        };
                         idx.into_ir(dfg, manager, flows);
                         let idx_val = last_inst_vec_value(flows);
                         ptr = dfg.new_value().get_elem_ptr(ptr, idx_val);
                         last_inst_vec(flows).push(Instruction::new(ptr, true));
                     }
 
-                    let load = dfg.new_value().load(ptr);
-                    last_inst_vec(flows)
-                        .extend([Instruction::new(ptr, true), Instruction::new(load, true)])
+                    match ty.kind() {
+                        TypeKind::Int32 | TypeKind::Pointer(_) => {
+                            let load = dfg.new_value().load(ptr);
+                            last_inst_vec(flows).push(Instruction::new(load, true))
+                        }
+                        TypeKind::Array(_, _) => {
+                            // If the result is still an array, we return a pointer to the first
+                            // element of the array.
+                            let zero = dfg.new_value().integer(0);
+                            let load = dfg.new_value().get_elem_ptr(ptr, zero);
+                            last_inst_vec(flows).extend([
+                                Instruction::new(zero, false),
+                                Instruction::new(load, true),
+                            ])
+                        }
+                        _ => panic!("Array element has unsupported type: {:?}", ty),
+                    }
                 }
             },
             Variable::Var(var) => {
                 let mut ptr = *var.value();
+                let mut ty = var.ty().clone();
+                if !ptr.is_global()
+                    && let TypeKind::Pointer(p) = dfg.value(ptr).ty().kind()
+                    && let TypeKind::Pointer(_) = p.kind()
+                {
+                    // Function parameters that are arrays are treated as pointers.
+                    let first_idx = index.remove(0); // This should never panic.
+                    first_idx.into_ir(dfg, manager, flows);
+                    let idx_val = last_inst_vec_value(flows);
+                    // Assume that array has type *i32 (decay of array type)
+                    // The alloc IR at the beginning od the function produces a pointer of type **i32.
+                    // So we need to load the pointer to get the actual array pointer of type *i32.
+                    let load = dfg.new_value().load(ptr);
+                    // Since we get the array pointer of type *i32, we cannot use get_elem_ptr
+                    // because it requires a pointer to an array type. So we use get_ptr to make the
+                    // offset calculation manually. The result is still a pointer of type *i32.
+                    ptr = dfg.new_value().get_ptr(load, idx_val);
+                    last_inst_vec(flows)
+                        .extend([Instruction::new(load, true), Instruction::new(ptr, true)]);
+                    ty = match ty.kind() {
+                        TypeKind::Pointer(elem_ty) => elem_ty.clone(),
+                        _ => panic!("Pointer type expected, but got {:?}", ty),
+                    };
+                }
                 for idx in index {
+                    ty = match ty.kind() {
+                        TypeKind::Array(elem_ty, _) => elem_ty.clone(),
+                        TypeKind::Pointer(elem_ty) => elem_ty.clone(),
+                        _ => panic!("Array or pointer type expected, but got {:?}", ty),
+                    };
                     idx.into_ir(dfg, manager, flows);
                     let idx_val = last_inst_vec_value(flows);
                     ptr = dfg.new_value().get_elem_ptr(ptr, idx_val);
                     last_inst_vec(flows).push(Instruction::new(ptr, true));
                 }
 
-                let load = dfg.new_value().load(ptr);
-                last_inst_vec(flows)
-                    .extend([Instruction::new(ptr, true), Instruction::new(load, true)])
+                match ty.kind() {
+                    TypeKind::Int32 | TypeKind::Pointer(_) => {
+                        let load = dfg.new_value().load(ptr);
+                        last_inst_vec(flows).push(Instruction::new(load, true))
+                    }
+                    TypeKind::Array(_, _) => {
+                        // If the result is still an array, we return a pointer to the first
+                        // element of the array.
+                        let zero = dfg.new_value().integer(0);
+                        ptr = dfg.new_value().get_elem_ptr(ptr, zero);
+                        last_inst_vec(flows)
+                            .extend([Instruction::new(zero, false), Instruction::new(ptr, true)]);
+                    }
+                    _ => panic!("Array element has unsupported type: {:?}", ty),
+                }
             }
         },
         None => panic!("Variable '{}' not defined", ident),
@@ -482,7 +570,7 @@ impl IntoIr for ast::LVal {
                 Some(var) => match var {
                     Variable::Const(val) => match val {
                         ConstValue::Int(val) => Some(*val),
-                        ConstValue::Function(_) | ConstValue::Array(_) => None,
+                        ConstValue::Function(_) | ConstValue::Array(_, _) => None,
                     },
                     // 变量不允许在编译期求值。
                     Variable::Var(_) => None,

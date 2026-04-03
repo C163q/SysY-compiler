@@ -6,7 +6,7 @@ use koopa::ir::{
 
 use crate::{
     ir::{
-        arr::{eval_array_dim, get_array_ty, normal_arr_to_aggregate, normalize_array},
+        arr::{self, eval_array_dim, get_array_ty, normal_arr_to_aggregate, normalize_array},
         meta::{
             BlockFlow, ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager,
             last_inst_vec, last_inst_vec_value,
@@ -107,9 +107,11 @@ fn init_arr(
         ast::InitVal::Array(arr) => {
             let arr = normalize_array(arr, sizes, elem_ty.clone());
             normal_arr_to_aggregate(
-                arr,
-                elem_ty,
-                value,
+                arr::ArrayInitInfo {
+                    arr,
+                    elem_ty,
+                    arr_val: value,
+                },
                 &mut vec![0; sizes.len()],
                 sizes,
                 dfg,
@@ -276,7 +278,7 @@ pub(super) fn define_array_const(
 
     // Variable manager: ident -> value
     manager
-        .define_const(ident, ConstValue::Array(value))
+        .define_const(ident, ConstValue::Array(value, arr_ty))
         .unwrap_or_else(|e| panic!("Error defining constant: {}", e));
     last_inst_vec(flows).push(Instruction::new(value, true));
 
@@ -342,18 +344,34 @@ fn assign_ir(
                 }
             }
         }
-        ast::LVal::Array { ident, index } => {
+        ast::LVal::Array { ident, mut index } => {
             let var = manager
                 .get(&ident)
                 .unwrap_or_else(|| panic!("Undefined variable: {}", ident));
             match var {
                 Variable::Const(_) => panic!("Cannot assign to constant variable: {}", ident),
                 Variable::Var(var) => {
-                    if index.is_empty() {
-                        panic!("Array variable '{}' must be indexed", ident);
-                    }
+                    assert!(
+                        !index.is_empty(),
+                        "Array access must have at least one index"
+                    );
                     let arr = *var.value();
                     let mut value = arr;
+                    if !arr.is_global()
+                        && let TypeKind::Pointer(p) = dfg.value(arr).ty().kind()
+                        && let TypeKind::Pointer(_) = p.kind()
+                    {
+                        // Function parameters that are arrays are treated as pointers.
+                        let first_idx = index.remove(0); // This should never panic.
+                        first_idx.into_ir(dfg, manager, flows);
+                        let idx_val = last_inst_vec_value(flows);
+                        // See [`expr::array_lval_ir`] to figure out why we need to load and
+                        // get_ptr here.
+                        let load = dfg.new_value().load(arr);
+                        value = dfg.new_value().get_ptr(load, idx_val);
+                        last_inst_vec(flows)
+                            .extend([Instruction::new(load, true), Instruction::new(value, true)]);
+                    }
                     for idx in index {
                         // IR: IR<%idx>
                         idx.into_ir(dfg, manager, flows);

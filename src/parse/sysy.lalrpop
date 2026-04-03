@@ -74,8 +74,13 @@ FuncFParams: FuncFParams = {
     }
 }
 
-/// FuncFParam ::= BType IDENT;
-FuncFParam: FuncFParam = <BType> <Ident> => FuncFParam::new(<>);
+/// FuncFParam ::= BType IDENT ["[" "]" {"[" ConstExp "]"}];
+FuncFParam: FuncFParam = {
+    <ty:BType> <ident:Ident> "[" "]" <indexs:("[" <ConstExp> "]")*> => {
+        FuncFParam::new(ty, ident, Some(indexs))
+    },
+    <BType> <Ident> => FuncFParam::new(<>, None),
+}
 
 /// Decl ::= ConstDecl;
 Decl: Decl = {

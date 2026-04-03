@@ -190,10 +190,14 @@ pub(super) fn normal_global_arr_to_aggregate(
     }
 }
 
+pub(super) struct ArrayInitInfo {
+    pub arr: Vec<ast::InitVal>,
+    pub elem_ty: Type,
+    pub arr_val: Value,
+}
+
 pub(super) fn normal_arr_to_aggregate(
-    arr: Vec<ast::InitVal>,
-    elem_ty: Type,
-    arr_val: Value,
+    arr_info: ArrayInitInfo,
     idxs: &mut [usize],
     dims: &[usize],
     dfg: &mut DataFlowGraph,
@@ -209,6 +213,11 @@ pub(super) fn normal_arr_to_aggregate(
             .zip(dims.iter())
             .all(|(&idx, &dim)| idx < dim)
     );
+    let ArrayInitInfo {
+        arr,
+        elem_ty,
+        arr_val,
+    } = arr_info;
     for init in arr {
         match init {
             ast::InitVal::Expr(expr) => {
@@ -247,9 +256,11 @@ pub(super) fn normal_arr_to_aggregate(
                     panic!("Initializer has too many elements for array dimension");
                 }
                 normal_arr_to_aggregate(
-                    sub_arr,
-                    elem_ty.clone(),
-                    arr_val,
+                    ArrayInitInfo {
+                        arr: sub_arr,
+                        elem_ty: elem_ty.clone(),
+                        arr_val,
+                    },
                     idxs,
                     &dims[1..],
                     dfg,

@@ -84,13 +84,14 @@ pub fn load(
     cfg: LoadContext,
 ) -> Result<(Vec<RiscvAsm>, Register), String> {
     if src.is_global() {
+        assert!(get_ptr_level(src, context) == get_ptr_level_from_ty(cfg.ty.kind().clone()) + 1);
         load_from_global(src, context, cfg.id)
     } else {
         load_from_local(src, context, cfg.id, cfg.ty)
     }
 }
 
-pub fn load_from_local(
+fn load_from_local(
     src: Value,
     context: &mut FunctionContext,
     id: Option<Value>,
@@ -145,7 +146,7 @@ pub fn load_from_local(
     Ok((asms, rd))
 }
 
-pub fn load_from_global(
+fn load_from_global(
     src: Value,
     context: &mut FunctionContext,
     id: Option<Value>,
@@ -211,13 +212,14 @@ pub fn store(
     cfg: StoreContext,
 ) -> Result<Vec<RiscvAsm>, String> {
     if target.is_global() {
+        assert!(get_ptr_level(target, context) == get_ptr_level_from_ty(cfg.ty.kind().clone()) + 1);
         store_to_global(src, target, context, cfg.id)
     } else {
         store_to_local(src, target, context, cfg.id, cfg.claim, cfg.ty)
     }
 }
 
-pub fn store_to_global(
+fn store_to_global(
     src: Register,
     dest: Value,
     context: &mut FunctionContext,
@@ -241,7 +243,7 @@ pub fn store_to_global(
     Ok(asms)
 }
 
-pub fn store_to_local(
+fn store_to_local(
     src: Register,
     target: Value,
     context: &mut FunctionContext,

@@ -23,7 +23,16 @@ impl ast::FuncDef {
                     fparams
                         .params
                         .into_iter()
-                        .map(|param| (Some(format!("@{}", param.ident)), param.ty.into()))
+                        .map(|param| {
+                            let mut ty = param.ty.into();
+                            if let Some(arr) = param.arr {
+                                for size in arr.into_iter().rev() {
+                                    ty = Type::get_array(ty, size.eval_usize(manager));
+                                }
+                                ty = Type::get_pointer(ty);
+                            }
+                            (Some(format!("@{}", param.ident)), ty)
+                        })
                         .inspect(|param: &(_, Type)| {
                             if param.1.is_unit() {
                                 panic!(
@@ -231,6 +240,8 @@ fn func_scope(
             .unwrap_or_else(|| panic!("Parameter value should have a name starting with '@'"))
             .to_string();
 
+        // We allocate a new memory for each parameter and store the parameter value into the
+        // memory. So that we can treat the parameter as a normal variable.
         let alloc = data.dfg_mut().new_value().alloc(ty.clone());
         let store = data.dfg_mut().new_value().store(param, alloc);
         last_inst_vec(&mut flows)
@@ -243,6 +254,15 @@ fn func_scope(
     }
 
     let dfg = data.dfg_mut();
+
+    if !matches!(
+        scope.items.last(),
+        Some(ast::BlockItem::Stmt(ast::Stmt::Return(_)))
+    ) {
+        scope
+            .items
+            .push(ast::BlockItem::Stmt(ast::Stmt::Return(None)));
+    }
 
     for item in scope.items {
         item.into_ir(dfg, guard.inner(), &mut flows);
@@ -280,38 +300,6 @@ fn func_scope(
                 true
             })
             .collect::<Vec<_>>();
-    }
-
-    match flows.last_mut() {
-        // void f() {}
-        None => {
-            flows.push(BlockFlow::new(
-                dfg.new_bb().basic_block(Some("%entry".to_string())),
-                vec![Instruction::new(dfg.new_value().ret(None), true)],
-            ));
-        }
-        Some(flow) => {
-            let last = flow
-                .insts
-                .last()
-                .expect("Basic block should have at least one instruction");
-            match dfg.value(*last.inst()).kind() {
-                ValueKind::Return(_) => {}
-                ValueKind::Branch(_) | ValueKind::Jump(_) => {
-                    flows.push(BlockFlow::new(
-                        dfg.new_bb().basic_block(None),
-                        vec![Instruction::new(dfg.new_value().ret(None), true)],
-                    ));
-                }
-                _ => {
-                    // void f() {
-                    //   do_something();
-                    // }
-                    flow.insts
-                        .push(Instruction::new(dfg.new_value().ret(None), true));
-                }
-            }
-        }
     }
 
     flows
