@@ -5,7 +5,7 @@ use koopa::ir::{
 
 use crate::{
     ir::{
-        arr::{eval_array_dim, get_array_ty, normal_global_arr_to_aggregate, normalize_array},
+        arr::{self, eval_array_dim, get_array_ty, normalize_array},
         block,
         meta::{ConstValue, IntoIr, VariableManager},
     },
@@ -42,9 +42,7 @@ fn global_decl_const_ir(
                     ast::InitVal::Array(arr) => {
                         let arr = normalize_array(arr, &sizes, ty);
                         let level = sizes.len();
-                        let mut elems = vec![];
-                        normal_global_arr_to_aggregate(&arr, level, &mut elems, program, manager);
-                        program.new_value().aggregate(elems)
+                        arr::global_arr_init(&arr, level, program, manager)
                     }
                     ast::InitVal::ZeroInit(_) => program.new_value().zero_init(arr_ty.clone()),
                 };
@@ -102,11 +100,7 @@ fn global_decl_var_ir(decl: ast::VarDecl, program: &mut Program, manager: &mut V
                         ast::InitVal::Array(arr) => {
                             let arr = normalize_array(arr, &sizes, ty);
                             let level = sizes.len();
-                            let mut elems = vec![];
-                            normal_global_arr_to_aggregate(
-                                &arr, level, &mut elems, program, manager,
-                            );
-                            program.new_value().aggregate(elems)
+                            arr::global_arr_init(&arr, level, program, manager)
                         }
                         ast::InitVal::ZeroInit(_) => program.new_value().zero_init(arr_ty.clone()),
                     },

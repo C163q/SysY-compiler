@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use koopa::ir::{
-    Program, Type, TypeKind, Value,
+    Program, Type, TypeKind, Value, ValueKind,
     builder::{LocalInstBuilder, ValueBuilder},
     dfg::DataFlowGraph,
 };
@@ -149,7 +149,27 @@ pub(super) fn normalize_array(
     ret
 }
 
-pub(super) fn normal_global_arr_to_aggregate(
+pub(super) fn global_arr_init(
+    arr: &[ast::InitVal],
+    level: usize,
+    program: &mut Program,
+    manager: &mut VariableManager,
+) -> Value {
+    let mut result = vec![];
+    normal_global_arr_to_aggregate(arr, level, &mut result, program, manager);
+    if result
+        .iter()
+        .all(|v| matches!(program.borrow_value(*v).kind(), ValueKind::ZeroInit(_)))
+    {
+        let sub_ty = program.borrow_value(result[0]).ty().clone();
+        let ty = Type::get_array(sub_ty, result.len());
+        program.new_value().zero_init(ty)
+    } else {
+        program.new_value().aggregate(result)
+    }
+}
+
+fn normal_global_arr_to_aggregate(
     arr: &[ast::InitVal],
     level: usize,
     result: &mut Vec<Value>,
@@ -180,8 +200,19 @@ pub(super) fn normal_global_arr_to_aggregate(
                     program,
                     manager,
                 );
-                let agg = program.new_value().aggregate(sub_result);
-                result.push(agg);
+                if sub_result
+                    .iter()
+                    .all(|v| matches!(program.borrow_value(*v).kind(), ValueKind::ZeroInit(_)))
+                {
+                    let sub_ty = program.borrow_value(sub_result[0]).ty().clone();
+                    let zero = program
+                        .new_value()
+                        .zero_init(Type::get_array(sub_ty, sub_result.len()));
+                    result.push(zero);
+                } else {
+                    let agg = program.new_value().aggregate(sub_result);
+                    result.push(agg);
+                }
             }
             ast::InitVal::ZeroInit(ty) => {
                 result.push(program.new_value().zero_init(ty.clone()));
