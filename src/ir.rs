@@ -6,7 +6,7 @@ pub mod global;
 pub mod meta;
 pub mod stdlib;
 
-use std::io;
+use std::{collections::HashSet, io};
 
 use koopa::{
     back::{NameManager, Visitor},
@@ -66,6 +66,8 @@ fn parse_to_ir(ast: parse::Ast) -> Program {
     let mut program = Program::new();
     let mut manager = meta::VariableManager::new();
     let components = ast::Components::new(ast.root);
+    let mut defined_func = HashSet::new();
+
     manager.new_scope();
 
     for decl in stdlib::get_function_decls() {
@@ -81,7 +83,7 @@ fn parse_to_ir(ast: parse::Ast) -> Program {
     // 如果没有注册函数，则向`FunctionData`写入数据时，无法向全局写入名称。
     // 本质就是`Weak`无法指向正确的`Rc`导致`upgrade`后调用`unwrap`，然后`panic`了。
     for item in components.list {
-        item.generate_ir(&mut program, &mut manager);
+        item.generate_ir(&mut program, &mut manager, &mut defined_func);
     }
 
     manager.exit_scope();

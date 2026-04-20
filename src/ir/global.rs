@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use koopa::ir::{
     Program, Type,
     builder::{GlobalInstBuilder, ValueBuilder},
@@ -6,7 +8,7 @@ use koopa::ir::{
 use crate::{
     ir::{
         arr::{self, eval_array_dim, get_array_ty, normalize_array},
-        block,
+        block, func,
         meta::{ConstValue, IntoIr, VariableManager},
     },
     parse::ast::{self, BType},
@@ -117,11 +119,20 @@ fn global_decl_var_ir(decl: ast::VarDecl, program: &mut Program, manager: &mut V
 }
 
 impl ast::GlobalItem {
-    pub fn generate_ir(self, program: &mut Program, manager: &mut VariableManager) {
+    pub fn generate_ir(
+        self,
+        program: &mut Program,
+        manager: &mut VariableManager,
+        defined_func: &mut HashSet<String>,
+    ) {
         match self {
             ast::GlobalItem::FuncDef(func_def) => {
-                let func = func_def.register_func(program, manager);
+                let func =
+                    func::register_func(&func_def.func_decl, program, manager, defined_func, true);
                 func_def.generate_ir(program.func_mut(func), manager);
+            }
+            ast::GlobalItem::FuncDecl(func_decl) => {
+                func::register_func(&func_decl, program, manager, defined_func, false);
             }
             ast::GlobalItem::Decl(decl) => match decl {
                 ast::Decl::Const(decl) => global_decl_const_ir(decl, program, manager),

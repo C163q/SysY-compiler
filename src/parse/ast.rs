@@ -34,6 +34,7 @@ impl Display for CompUnit {
 
 #[derive(Debug, Clone)]
 pub enum GlobalItem {
+    FuncDecl(FuncDecl),
     FuncDef(FuncDef),
     Decl(Decl),
 }
@@ -51,6 +52,7 @@ impl GlobalItem {
 impl Display for GlobalItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            GlobalItem::FuncDecl(func_decl) => write!(f, "{};", func_decl),
             GlobalItem::FuncDef(func_def) => write!(f, "{}", func_def),
             GlobalItem::Decl(decl) => write!(f, "{}", decl),
         }
@@ -75,6 +77,32 @@ impl Components {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FuncDecl {
+    pub ret_type: BType,
+    pub ident: String,
+    pub fparams: Option<FuncFParams>,
+}
+
+impl FuncDecl {
+    pub fn new(ret_type: BType, ident: String, fparams: Option<FuncFParams>) -> Self {
+        Self {
+            ret_type,
+            ident,
+            fparams,
+        }
+    }
+}
+
+impl Display for FuncDecl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.fparams {
+            Some(params) => write!(f, "{} {}({})", self.ret_type, self.ident, params),
+            None => write!(f, "{} {}()", self.ret_type, self.ident),
+        }
+    }
+}
+
 /// 函数的定义
 ///
 /// ```c, ignore
@@ -86,26 +114,19 @@ impl Components {
 /// ```
 #[derive(Debug, Clone)]
 pub struct FuncDef {
-    pub ret_type: BType,
-    pub ident: String,
-    pub fparams: Option<FuncFParams>,
+    pub func_decl: FuncDecl,
     pub block: Block,
 }
 
 impl FuncDef {
-    pub fn new(ret_type: BType, ident: String, fparams: Option<FuncFParams>, block: Block) -> Self {
-        Self {
-            ret_type,
-            ident,
-            fparams,
-            block,
-        }
+    pub fn new(func_decl: FuncDecl, block: Block) -> Self {
+        Self { func_decl, block }
     }
 }
 
 impl Display for FuncDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}() {}", self.ret_type, self.ident, self.block)
+        write!(f, "{} {}", self.func_decl, self.block)
     }
 }
 

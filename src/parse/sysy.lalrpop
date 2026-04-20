@@ -2,6 +2,7 @@ use crate::parse::ast::{
     Block,
     CompUnit,
     FuncDef,
+    FuncDecl,
     FuncFParams,
     FuncFParam,
     FuncRParams,
@@ -60,9 +61,18 @@ GlobalItem: GlobalItem = {
     <FuncDef> => GlobalItem::new_func_def(<>),
 };
 
+/// FuncDecl ::= FuncType IDENT "(" [FuncFParams] ")" ";";
+FuncDecl: FuncDecl = {
+    <FuncDeclInner> ";" => <>,
+};
+
+FuncDeclInner: FuncDecl = {
+    <BType> <Ident> "(" <FuncFParams?> ")" => FuncDecl::new(<>),
+};
+
 /// FuncDef ::= BType IDENT "(" (FuncFParams)? ")" Block;
 FuncDef: FuncDef = {
-    <BType> <Ident> "(" <FuncFParams?> ")" <Block> => FuncDef::new(<>),
+    <FuncDeclInner> <Block> => FuncDef::new(<>),
 }
 
 /// FuncFParams ::= FuncFParam ("," FuncFParam)*;

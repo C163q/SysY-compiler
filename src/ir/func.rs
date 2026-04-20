@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use koopa::ir::{
     Function, FunctionData, Program, Type, ValueKind,
     builder::{BasicBlockBuilder, LocalInstBuilder},
@@ -5,54 +7,84 @@ use koopa::ir::{
 
 use crate::{
     ir::meta::{
-        BlockFlow, ConstValue, Instruction, IntoIr, ScopeGuard, VariableManager, last_inst_vec,
+        BlockFlow, ConstValue, Instruction, IntoIr, ScopeGuard, Variable, VariableManager,
+        last_inst_vec,
     },
     parse::ast,
 };
 
-impl ast::FuncDef {
-    /// Add a new function in program without parsing its body.
-    pub fn register_func(&self, program: &mut Program, manager: &mut VariableManager) -> Function {
-        let data = {
-            let ret_type = self.ret_type.into();
-            let func_name = format!("@{}", self.ident);
-            match self.fparams.clone() {
-                None => FunctionData::with_param_names(func_name, vec![], ret_type),
-                Some(fparams) => FunctionData::with_param_names(
-                    func_name,
-                    fparams
-                        .params
-                        .into_iter()
-                        .map(|param| {
-                            let mut ty = param.ty.into();
-                            if let Some(arr) = param.arr {
-                                for size in arr.into_iter().rev() {
-                                    ty = Type::get_array(ty, size.eval_usize(manager));
-                                }
-                                ty = Type::get_pointer(ty);
-                            }
-                            (Some(format!("@{}", param.ident)), ty)
-                        })
-                        .inspect(|param: &(_, Type)| {
-                            if param.1.is_unit() {
-                                panic!(
-                                    "Parameter '{}' cannot have void type",
-                                    param.0.as_ref().unwrap()
-                                )
-                            }
-                        })
-                        .collect(),
-                    ret_type,
+/// Add a new function in program without parsing its body.
+pub fn register_func(
+    func_decl: &ast::FuncDecl,
+    program: &mut Program,
+    manager: &mut VariableManager,
+    defined_func: &mut HashSet<String>,
+    is_def: bool,
+) -> Function {
+    if is_def && !defined_func.insert(func_decl.ident.clone()) {
+        panic!(
+            "Function '{}' has been defined multiple times",
+            func_decl.ident
+        );
+    }
+    if let Some(v) = manager.get(&func_decl.ident) {
+        match v {
+            Variable::Var(_) => panic!(
+                "Function '{}' has the same name as a variable",
+                func_decl.ident
+            ),
+            Variable::Const(v) => match v {
+                ConstValue::Function(_) => (),
+                _ => panic!(
+                    "Function '{}' has the same name as a constant",
+                    func_decl.ident
                 ),
-            }
-        };
-        let value = program.new_func(data);
-        manager
-            .define_const(self.ident.clone(), ConstValue::Function(value))
-            .expect("Error defining function");
-        value
+            },
+        }
     }
 
+    let data = {
+        let ret_type = func_decl.ret_type.into();
+        let func_name = format!("@{}", func_decl.ident);
+        match func_decl.fparams.clone() {
+            None => FunctionData::with_param_names(func_name, vec![], ret_type),
+            Some(fparams) => FunctionData::with_param_names(
+                func_name,
+                fparams
+                    .params
+                    .into_iter()
+                    .map(|param| {
+                        let mut ty = param.ty.into();
+                        if let Some(arr) = param.arr {
+                            for size in arr.into_iter().rev() {
+                                ty = Type::get_array(ty, size.eval_usize(manager));
+                            }
+                            ty = Type::get_pointer(ty);
+                        }
+                        (Some(format!("@{}", param.ident)), ty)
+                    })
+                    .inspect(|param: &(_, Type)| {
+                        if param.1.is_unit() {
+                            panic!(
+                                "Parameter '{}' cannot have void type",
+                                param.0.as_ref().unwrap()
+                            )
+                        }
+                    })
+                    .collect(),
+                ret_type,
+            ),
+        }
+    };
+
+    let value = program.new_func(data);
+    manager
+        .define_const(func_decl.ident.clone(), ConstValue::Function(value))
+        .expect("Error defining function");
+    value
+}
+
+impl ast::FuncDef {
     /// parsing function body into IR.
     ///
     /// NOTE: function MUST be registered first.
